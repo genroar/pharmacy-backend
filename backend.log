@@ -1,0 +1,211 @@
+
+> medibill-pulse-backend@1.0.0 dev
+> nodemon src/server.ts
+
+[33m[nodemon] 3.1.10[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: ts,json[39m
+[32m[nodemon] starting `ts-node src/server.ts`[39m
+============================================================
+🔍 CHECKING DATABASE CONNECTION STATUS
+============================================================
+📊 Database URL: postgresql://ixbspartan@localhost:5432/medibill_pulse?schema=public
+⏳ Attempting to connect...
+============================================================
+✅ DATABASE CONNECTION: SUCCESSFUL
+============================================================
+📋 Database Name: medibill_pulse
+🕐 Connection Time: 2025-09-20T14:22:42.943Z
+🔗 Status: CONNECTED
+============================================================
+Error: listen EADDRINUSE: address already in use :::5001
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at Function.listen (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/application.js:635:24)
+    at startServer (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/server.ts:199:7) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5001
+}
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/server.ts`[39m
+============================================================
+🔍 CHECKING DATABASE CONNECTION STATUS
+============================================================
+📊 Database URL: postgresql://ixbspartan@localhost:5432/medibill_pulse?schema=public
+⏳ Attempting to connect...
+============================================================
+✅ DATABASE CONNECTION: SUCCESSFUL
+============================================================
+📋 Database Name: medibill_pulse
+🕐 Connection Time: 2025-09-20T14:26:41.518Z
+🔗 Status: CONNECTED
+============================================================
+============================================================
+🚀 MEDIBILL PULSE BACKEND SERVER STARTED
+============================================================
+🌐 Server running on port: 5001
+📊 Environment: development
+🔗 Health check: http://localhost:5001/health
+📋 API Base URL: http://localhost:5001/api
+============================================================
+SSE authentication error: JsonWebTokenError: jwt malformed
+    at Object.module.exports [as verify] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:70:17)
+    at authenticateSSE (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:24:25)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:61:22
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/index.js:284:15
+    at Function.process_params (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/index.js:346:12)
+    at next (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/index.js:280:10)
+[0mGET /api/sse/events?token=test [33m401[0m 2.059 ms - 26[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/server.ts`[39m
+============================================================
+🔍 CHECKING DATABASE CONNECTION STATUS
+============================================================
+📊 Database URL: postgresql://ixbspartan@localhost:5432/medibill_pulse?schema=public
+⏳ Attempting to connect...
+============================================================
+✅ DATABASE CONNECTION: SUCCESSFUL
+============================================================
+📋 Database Name: medibill_pulse
+🕐 Connection Time: 2025-09-20T14:27:38.365Z
+🔗 Status: CONNECTED
+============================================================
+Error: listen EADDRINUSE: address already in use :::5001
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at Function.listen (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/application.js:635:24)
+    at startServer (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/server.ts:199:7) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 5001
+}
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/server.ts`[39m
+============================================================
+🔍 CHECKING DATABASE CONNECTION STATUS
+============================================================
+📊 Database URL: postgresql://ixbspartan@localhost:5432/medibill_pulse?schema=public
+⏳ Attempting to connect...
+============================================================
+✅ DATABASE CONNECTION: SUCCESSFUL
+============================================================
+📋 Database Name: medibill_pulse
+🕐 Connection Time: 2025-09-20T14:34:43.773Z
+🔗 Status: CONNECTED
+============================================================
+============================================================
+🚀 MEDIBILL PULSE BACKEND SERVER STARTED
+============================================================
+🌐 Server running on port: 5001
+📊 Environment: development
+🔗 Health check: http://localhost:5001/health
+📋 API Base URL: http://localhost:5001/api
+============================================================
+🔍 Login attempt - Request body: { usernameOrEmail: 'bilalNoor', password: '123456' }
+🔍 Login attempt - Username/Email: bilalNoor
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 267.869 ms - 548[0m
+🔍 Login attempt - Request body: { usernameOrEmail: 'admin', password: 'password123' }
+🔍 Login attempt - Username/Email: admin
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 62.256 ms - 502[0m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `ts-node src/server.ts`[39m
+============================================================
+🔍 CHECKING DATABASE CONNECTION STATUS
+============================================================
+📊 Database URL: postgresql://ixbspartan@localhost:5432/medibill_pulse?schema=public
+⏳ Attempting to connect...
+============================================================
+✅ DATABASE CONNECTION: SUCCESSFUL
+============================================================
+📋 Database Name: medibill_pulse
+🕐 Connection Time: 2025-09-20T14:35:46.550Z
+🔗 Status: CONNECTED
+============================================================
+============================================================
+🚀 MEDIBILL PULSE BACKEND SERVER STARTED
+============================================================
+🌐 Server running on port: 5001
+📊 Environment: development
+🔗 Health check: http://localhost:5001/health
+📋 API Base URL: http://localhost:5001/api
+============================================================
+🔍 Login attempt - Request body: { usernameOrEmail: 'test_admin_one', password: '123456' }
+🔍 Login attempt - Username/Email: test_admin_one
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 284.161 ms - 559[0m
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX29uZSIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2Q4aDVsMDAwMzZrN3JydmIwaW5vNiIsImFkbWluSWQiOm51bGwsImlhdCI6MTc1ODM3ODY1MywiZXhwIjoxNzU4OTgzNDUzfQ.7GXxg8AK_p4dlci9lt5ObX27-GLRKzUPuzrhd6LhYnM [32m200[0m 38.044 ms - -[0m
+SSE connection closed for user cmfsd8h5b00016k7rmdpa88bo
+🔍 Login attempt - Request body: { usernameOrEmail: 'test_admin_one', password: '123456' }
+🔍 Login attempt - Username/Email: test_admin_one
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 263.310 ms - 559[0m
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX29uZSIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2Q4aDVsMDAwMzZrN3JydmIwaW5vNiIsImFkbWluSWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwiaWF0IjoxNzU4Mzc4OTcyLCJleHAiOjE3NTg5ODM3NzJ9.dFuFDFWUV411Ecm7B6qGyyihHWA4Hedy3Dvh01CUTe8 [32m200[0m 2.426 ms - -[0m
+SSE connection closed for user cmfsd8h5b00016k7rmdpa88bo
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX29uZSIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2Q4aDVsMDAwMzZrN3JydmIwaW5vNiIsImFkbWluSWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwiaWF0IjoxNzU4Mzc4OTc4LCJleHAiOjE3NTg5ODM3Nzh9.1MwI0oNegtc0HtTzY48RqZCu0GD3Xnx_7euvV0wBbCU [32m200[0m 1.565 ms - -[0m
+SSE connection closed for user cmfsd8h5b00016k7rmdpa88bo
+[0mPOST /api/auth/register [32m201[0m 283.886 ms - 559[0m
+🔍 Login attempt - Request body: { usernameOrEmail: 'test_admin_two', password: '123456' }
+🔍 Login attempt - Username/Email: test_admin_two
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 259.001 ms - 559[0m
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX29uZSIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2Q4aDVsMDAwMzZrN3JydmIwaW5vNiIsImFkbWluSWQiOiJjbWZzZDhoNWIwMDAxNms3cm1kcGE4OGJvIiwiaWF0IjoxNzU4Mzc4OTc4LCJleHAiOjE3NTg5ODM3Nzh9.1MwI0oNegtc0HtTzY48RqZCu0GD3Xnx_7euvV0wBbCU [32m200[0m 2.632 ms - -[0m
+SSE connection closed for user cmfsd8h5b00016k7rmdpa88bo
+🔍 Login attempt - Request body: { usernameOrEmail: 'test_admin_two', password: '123456' }
+🔍 Login attempt - Username/Email: test_admin_two
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 261.489 ms - 559[0m
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX3R3byIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2RoZGRrMDAwM2FxNGEzc3E5MWN2eSIsImFkbWluSWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwiaWF0IjoxNzU4Mzc5MDg0LCJleHAiOjE3NTg5ODM4ODR9.96OLcIY1enDg_eTtiHqz0WVu8PaGJRr0eCTtVlK6KjY [32m200[0m 2.684 ms - -[0m
+SSE connection closed for user cmfsdhdd30001aq4aekdl34r0
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX3R3byIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2RoZGRrMDAwM2FxNGEzc3E5MWN2eSIsImFkbWluSWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwiaWF0IjoxNzU4Mzc5MDg3LCJleHAiOjE3NTg5ODM4ODd9.KQpYqERymv9bS-KJMhxo0SW-1k3XyRdKADXc3KrSUXA [32m200[0m 1.435 ms - -[0m
+SSE connection closed for user cmfsdhdd30001aq4aekdl34r0
+SSE authentication error: JsonWebTokenError: invalid signature
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:171:19
+    at getSecret (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:97:14)
+    at Object.module.exports [as verify] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:101:10)
+    at authenticateSSE (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:24:25)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:61:22
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/index.js:284:15
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZwcmRucjMwMDAzY3U1M3I4aGk2czRhIiwidXNlcm5hbWUiOiJ0ZXN0X2Nhc2hpZXIiLCJyb2xlIjoiQ0FTSElFUiIsImJyYW5jaElkIjoiY21mcHIwaWZ3MDAwNDEyY2tlcTVjM2psayIsImFkbWluSWQiOiJjbWZwcjBpZm8wMDAyMTJja3NqZnB2ZnZpIiwiaWF0IjoxNzU4Mzc2OTQ5LCJleHAiOjE3NTg5ODE3NDl9.nGuS0KMUfi_7CGDJV3hIzpu2Q4_Lj3G21etqfOF5EWo [33m401[0m 4.741 ms - 26[0m
+SSE authentication error: JsonWebTokenError: invalid signature
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:171:19
+    at getSecret (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:97:14)
+    at Object.module.exports [as verify] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/jsonwebtoken/verify.js:101:10)
+    at authenticateSSE (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:24:25)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/src/routes/sse.routes.ts:61:22
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/layer.js:95:5)
+    at /Users/ixbspartan/Desktop/Genroar/Pharmacy-App/backend-pharmachy/node_modules/express/lib/router/index.js:284:15
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZwcmRuazgwMDAxY3U1M3RmMGE4eHNtIiwidXNlcm5hbWUiOiJ0ZXN0X21hbmFnZXIiLCJyb2xlIjoiTUFOQUdFUiIsImJyYW5jaElkIjoiY21mcHIwaWZ3MDAwNDEyY2tlcTVjM2psayIsImFkbWluSWQiOiJjbWZwcjBpZm8wMDAyMTJja3NqZnB2ZnZpIiwiaWF0IjoxNzU4Mzc2Njk4LCJleHAiOjE3NTg5ODE0OTh9.toycUMrUwqbHxigzA062oR_xoYyZvSti2eZtKy3pKng [33m401[0m 1.836 ms - 26[0m
+🔍 Login attempt - Request body: { usernameOrEmail: 'test_manager', password: '123456' }
+🔍 Login attempt - Username/Email: test_manager
+🔐 Password check - Valid: true
+[0mPOST /api/auth/login [32m200[0m 258.713 ms - 557[0m
+[0mGET /api/sse/events?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwidXNlcm5hbWUiOiJ0ZXN0X2FkbWluX3R3byIsInJvbGUiOiJBRE1JTiIsImJyYW5jaElkIjoiY21mc2RoZGRrMDAwM2FxNGEzc3E5MWN2eSIsImFkbWluSWQiOiJjbWZzZGhkZDMwMDAxYXE0YWVrZGwzNHIwIiwiaWF0IjoxNzU4Mzc5MDg3LCJleHAiOjE3NTg5ODM4ODd9.KQpYqERymv9bS-KJMhxo0SW-1k3XyRdKADXc3KrSUXA [32m200[0m 1.314 ms - -[0m
+SSE connection closed for user cmfsdhdd30001aq4aekdl34r0
+🔍 Login attempt - Request body: { usernameOrEmail: 'testuser', password: 'testpass' }
+🔍 Login attempt - Username/Email: testuser
+❌ User not found for username/email: testuser
+[0mPOST /api/auth/login [33m401[0m 2.361 ms - 49[0m
+Shutting down gracefully...

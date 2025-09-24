@@ -1,0 +1,20 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const product_controller_1 = require("../controllers/product.controller");
+const auth_middleware_1 = require("../middleware/auth.middleware");
+const router = (0, express_1.Router)();
+router.use(auth_middleware_1.authenticate);
+router.get('/', product_controller_1.getProducts);
+router.get('/all', product_controller_1.getAllProducts);
+router.get('/stock-movements', product_controller_1.getStockMovements);
+router.get('/:id', product_controller_1.getProduct);
+router.post('/', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.createProduct);
+router.post('/bulk-import', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.bulkImportProducts);
+router.post('/bulk-delete', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.bulkDeleteProducts);
+router.put('/:id', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.updateProduct);
+router.delete('/:id', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.deleteProduct);
+router.patch('/:id/stock', (0, auth_middleware_1.authorize)('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'PHARMACIST'), product_controller_1.updateStock);
+router.post('/activate-all', (0, auth_middleware_1.authorize)('ADMIN', 'SUPERADMIN'), product_controller_1.activateAllProducts);
+exports.default = router;
+//# sourceMappingURL=product.routes.js.map
