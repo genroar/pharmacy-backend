@@ -619,7 +619,12 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
     // Process each product
     for (const productData of products) {
       try {
-        console.log('Processing product:', productData.name);
+        console.log('=== PROCESSING PRODUCT ===');
+        console.log('Product data received:', productData);
+        console.log('Product name:', productData.name);
+        console.log('Product selling price:', productData.sellingPrice);
+        console.log('Product category ID:', productData.categoryId);
+        console.log('Product branch ID:', productData.branchId);
 
         // Auto-generate missing fields
         if (!productData.name || productData.name.trim() === '') {
@@ -934,11 +939,13 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
         });
 
       } catch (error: any) {
-        console.error(`Error processing product ${productData.name}:`, error);
+        console.error(`=== ERROR PROCESSING PRODUCT ${productData.name} ===`);
+        console.error('Product data that failed:', productData);
         console.error('Error details:', {
           message: error.message,
           code: error.code,
-          meta: error.meta
+          meta: error.meta,
+          stack: error.stack
         });
 
         let errorMessage = error.message || 'Unknown error';
@@ -956,7 +963,13 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           errorMessage = `Invalid reference: ${error.meta?.field_name} does not exist`;
         } else if (error.code === 'P2025') {
           errorMessage = `Record not found: ${error.meta?.cause}`;
+        } else if (error.message?.includes('Invalid value')) {
+          errorMessage = `Invalid data format: ${error.message}`;
+        } else if (error.message?.includes('Required field')) {
+          errorMessage = `Missing required field: ${error.message}`;
         }
+
+        console.error(`Final error message for ${productData.name}:`, errorMessage);
 
         results.failed.push({
           product: productData,

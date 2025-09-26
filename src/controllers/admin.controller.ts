@@ -276,7 +276,18 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
 
     // Create admin user and branch in a transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Create admin user first
+      // Create a new branch for this admin first
+      const branch = await tx.branch.create({
+        data: {
+          name: company,
+          address: 'Default Address', // Can be updated later
+          phone: finalPhone,
+          email,
+          createdBy: currentUser.id // Link branch to the super admin who created it
+        }
+      });
+
+      // Create admin user with the correct branchId
       const admin = await tx.user.create({
         data: {
           username,
@@ -284,33 +295,27 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
           password: hashedPassword,
           name,
           role: 'ADMIN',
-          branchId: 'temp', // Will be set after branch creation
+          branchId: branch.id, // Use the actual branch ID
           createdBy: currentUser.id, // Who created this admin
           isActive: true
+        },
+        include: {
+          branch: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              phone: true,
+              email: true
+            }
+          }
         }
       });
 
       // Update admin to set createdBy to self-reference
-      const updatedAdmin = await tx.user.update({
-        where: { id: admin.id },
-        data: { createdBy: admin.id }
-      });
-
-      // Create a new branch for this admin
-      const branch = await tx.branch.create({
-        data: {
-          name: company,
-          address: 'Default Address', // Can be updated later
-          phone: finalPhone,
-          email,
-          createdBy: admin.id // Link branch to this admin
-        }
-      });
-
-      // Update admin with branchId
       const finalAdmin = await tx.user.update({
         where: { id: admin.id },
-        data: { branchId: branch.id },
+        data: { createdBy: admin.id },
         include: {
           branch: {
             select: {
