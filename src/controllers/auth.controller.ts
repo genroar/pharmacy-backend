@@ -160,7 +160,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // If branchData is provided, create a new branch (for admin registration)
     if (branchData && (role === 'ADMIN' || role === 'SUPERADMIN')) {
       // First create the user to get the createdBy
-      const hashedPassword = await bcrypt.hash(password, 12);
+      const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
       user = await prisma.user.create({
         data: {
@@ -214,7 +214,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       }
 
       // Hash password
-      const hashedPassword = await bcrypt.hash(password, 12);
+      const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
       // Create user
       user = await prisma.user.create({
@@ -353,7 +353,7 @@ export const changePassword = async (req: Request, res: Response): Promise<void>
     }
 
     // Hash new password
-    const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+    const hashedNewPassword = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
     // Update password
     await prisma.user.update({

@@ -223,7 +223,7 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     }
 
     // Hash password
-    const hashedPassword = await bcrypt.hash(userData.password, 12);
+    const hashedPassword = await bcrypt.hash(userData.password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
     // Get the current user ID and createdBy from the request (set by auth middleware)
     const currentUserId = req.user?.id;
@@ -313,7 +313,7 @@ export const updateUser = async (req: Request, res: Response) => {
 
     // Hash password if provided
     if (updateData.password) {
-      updateData.password = await bcrypt.hash(updateData.password, 12);
+      updateData.password = await bcrypt.hash(updateData.password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
     }
 
     const user = await prisma.user.update({

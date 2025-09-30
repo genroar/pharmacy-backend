@@ -262,7 +262,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
 
     // Generate username and hash password
     const username = email.split('@')[0] + '_admin';
-    const hashedPassword = await require('bcryptjs').hash(password, 12);
+    const hashedPassword = await require('bcryptjs').hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
     // Get the current user (super admin) who is creating this admin
     const currentUser = req.user;

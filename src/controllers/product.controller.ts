@@ -246,7 +246,7 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
             name: 'Default Supplier',
             contactPerson: 'System Generated',
             phone: '+92 300 0000000',
-            email: 'system@default.com',
+            email: process.env.SYSTEM_EMAIL || 'system@default.com',
             address: 'Auto-created for imports',
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
             isActive: true
@@ -720,7 +720,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
                 name: 'Default Supplier',
                 contactPerson: 'System Generated',
                 phone: '+92 300 0000000',
-                email: 'system@default.com',
+                email: process.env.SYSTEM_EMAIL || 'system@default.com',
                 address: 'Auto-created for imports',
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                 isActive: true
@@ -749,7 +749,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
                 name: 'Default Branch',
                 address: 'Auto-created for imports',
                 phone: '+92 300 0000000',
-                email: 'default@branch.com',
+                email: process.env.BRANCH_EMAIL || 'default@branch.com',
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                 isActive: true
               }
