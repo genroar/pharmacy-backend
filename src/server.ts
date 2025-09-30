@@ -190,10 +190,22 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
-const PORT = process.env.PORT || 5000;
+// Ensure PORT is always a valid number
+const PORT: number = (() => {
+  const portEnv = process.env.PORT;
+  if (!portEnv) return 5000;
+
+  const parsed = parseInt(portEnv, 10);
+  if (isNaN(parsed) || parsed < 1 || parsed > 65535) {
+    console.warn(`Invalid PORT value: ${portEnv}. Using default port 5000.`);
+    return 5000;
+  }
+
+  return parsed;
+})();
 
 // Start server with database connection check
-async function startServer() {
+async function startServer(): Promise<void> {
   // Test database connection first
   const dbConnected = await testDatabaseConnection();
 
@@ -202,7 +214,7 @@ async function startServer() {
     console.log('💡 Please check your database configuration');
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
     console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
     console.log('='.repeat(60));
@@ -211,6 +223,18 @@ async function startServer() {
     console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
     console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
     console.log('='.repeat(60));
+  });
+
+  // Handle server startup errors
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use. Please try a different port.`);
+    } else if (error.code === 'EACCES') {
+      console.error(`❌ Permission denied to bind to port ${PORT}. Please use a port above 1024.`);
+    } else {
+      console.error('❌ Server startup error:', error.message);
+    }
+    process.exit(1);
   });
 }
 

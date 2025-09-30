@@ -155,22 +155,44 @@ process.on('SIGTERM', async () => {
     await prisma.$disconnect();
     process.exit(0);
 });
-const PORT = process.env.PORT || 5000;
+const PORT = (() => {
+    const portEnv = process.env.PORT;
+    if (!portEnv)
+        return 5000;
+    const parsed = parseInt(portEnv, 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 65535) {
+        console.warn(`Invalid PORT value: ${portEnv}. Using default port 5000.`);
+        return 5000;
+    }
+    return parsed;
+})();
 async function startServer() {
     const dbConnected = await testDatabaseConnection();
     if (!dbConnected) {
         console.log('⚠️  Server starting with database connection issues...');
         console.log('💡 Please check your database configuration');
     }
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
         console.log('='.repeat(60));
         console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
         console.log('='.repeat(60));
         console.log(`🌐 Server running on port: ${PORT}`);
         console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-        console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-        console.log(`📋 API Base URL: http://localhost:${PORT}/api`);
+        console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
+        console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
         console.log('='.repeat(60));
+    });
+    server.on('error', (error) => {
+        if (error.code === 'EADDRINUSE') {
+            console.error(`❌ Port ${PORT} is already in use. Please try a different port.`);
+        }
+        else if (error.code === 'EACCES') {
+            console.error(`❌ Permission denied to bind to port ${PORT}. Please use a port above 1024.`);
+        }
+        else {
+            console.error('❌ Server startup error:', error.message);
+        }
+        process.exit(1);
     });
 }
 startServer();
