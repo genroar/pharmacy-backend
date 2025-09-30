@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.downloadInvoice = exports.getBillingHistory = exports.deletePaymentMethod = exports.setDefaultPaymentMethod = exports.addPaymentMethod = exports.getPaymentMethods = exports.updateSubscription = exports.getSubscription = void 0;
+exports.downloadInvoice = exports.getPaymentMethods = exports.processPayment = exports.getBillingHistory = exports.deletePaymentMethod = exports.setDefaultPaymentMethod = exports.addPaymentMethod = exports.updateSubscription = exports.getSubscription = void 0;
 const client_1 = require("@prisma/client");
 const joi_1 = __importDefault(require("joi"));
 const prisma = new client_1.PrismaClient();
@@ -112,52 +112,6 @@ const updateSubscription = async (req, res) => {
     }
 };
 exports.updateSubscription = updateSubscription;
-const getPaymentMethods = async (req, res) => {
-    try {
-        const userId = req.user?.id;
-        if (!userId) {
-            res.status(401).json({
-                success: false,
-                message: 'Unauthorized'
-            });
-            return;
-        }
-        const paymentMethods = [
-            {
-                id: 'pm_1',
-                type: 'card',
-                last4: '4242',
-                brand: 'Visa',
-                expiryMonth: 12,
-                expiryYear: 2025,
-                isDefault: true,
-                holderName: 'Dr. Ahmed Khan'
-            },
-            {
-                id: 'pm_2',
-                type: 'card',
-                last4: '5555',
-                brand: 'Mastercard',
-                expiryMonth: 8,
-                expiryYear: 2026,
-                isDefault: false,
-                holderName: 'Dr. Ahmed Khan'
-            }
-        ];
-        res.json({
-            success: true,
-            data: paymentMethods
-        });
-    }
-    catch (error) {
-        console.error('Get payment methods error:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error'
-        });
-    }
-};
-exports.getPaymentMethods = getPaymentMethods;
 const addPaymentMethod = async (req, res) => {
     try {
         const { error } = addPaymentMethodSchema.validate(req.body);
@@ -294,6 +248,130 @@ const getBillingHistory = async (req, res) => {
     }
 };
 exports.getBillingHistory = getBillingHistory;
+const processPayment = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const { method, phoneNumber, amount, transactionId } = req.body;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: 'Unauthorized'
+            });
+            return;
+        }
+        if (!method || !phoneNumber || !amount) {
+            res.status(400).json({
+                success: false,
+                message: 'Missing required payment information'
+            });
+            return;
+        }
+        const paymentRecord = {
+            id: `pay_${Date.now()}`,
+            userId,
+            method,
+            phoneNumber,
+            amount,
+            transactionId: transactionId || `TXN_${Date.now()}`,
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+            plan: 'premium'
+        };
+        res.json({
+            success: true,
+            message: 'Payment processed successfully',
+            data: {
+                paymentId: paymentRecord.id,
+                transactionId: paymentRecord.transactionId,
+                amount: paymentRecord.amount,
+                method: paymentRecord.method,
+                status: 'completed',
+                subscription: {
+                    plan: 'premium',
+                    status: 'active',
+                    startDate: new Date().toISOString(),
+                    endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+                }
+            }
+        });
+    }
+    catch (error) {
+        console.error('Process payment error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.processPayment = processPayment;
+const getPaymentMethods = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            res.status(401).json({
+                success: false,
+                message: 'Unauthorized'
+            });
+            return;
+        }
+        const paymentMethods = [
+            {
+                id: 'easypaisa',
+                name: 'EasyPaisa',
+                type: 'mobile',
+                icon: 'smartphone',
+                description: 'Pay using your EasyPaisa account',
+                features: ['Instant payment', 'Secure', 'Easy to use'],
+                instructions: [
+                    'Open EasyPaisa app',
+                    'Go to Send Money',
+                    'Enter amount and recipient',
+                    'Complete transaction'
+                ]
+            },
+            {
+                id: 'jazzcash',
+                name: 'JazzCash',
+                type: 'mobile',
+                icon: 'smartphone',
+                description: 'Pay using your JazzCash account',
+                features: ['Quick payment', 'Reliable', 'Bank-level security'],
+                instructions: [
+                    'Open JazzCash app',
+                    'Go to Send Money',
+                    'Enter amount and recipient',
+                    'Complete transaction'
+                ]
+            },
+            {
+                id: 'bank_transfer',
+                name: 'Bank Transfer',
+                type: 'bank',
+                icon: 'building',
+                description: 'Traditional bank transfer',
+                features: ['Secure', 'Traditional', 'Bank guarantee'],
+                instructions: [
+                    'Transfer to provided account',
+                    'Use reference number',
+                    'Upload receipt',
+                    'Wait for confirmation'
+                ]
+            }
+        ];
+        res.json({
+            success: true,
+            data: paymentMethods
+        });
+    }
+    catch (error) {
+        console.error('Get payment methods error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.getPaymentMethods = getPaymentMethods;
 const downloadInvoice = async (req, res) => {
     try {
         const { invoiceId } = req.params;

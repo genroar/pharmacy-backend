@@ -50,11 +50,11 @@ const getSettings = async (req, res) => {
             autoSync: settingsObj.autoSync || 'true',
             offlineMode: settingsObj.offlineMode || 'true',
             receiptPrinter: settingsObj.receiptPrinter || 'EPSON TM-T20II',
-            pharmacyName: settingsObj.pharmacyName || 'Al-Shifa Pharmacy',
+            pharmacyName: settingsObj.pharmacyName || process.env.DEFAULT_PHARMACY_NAME || 'MediBill Pulse Pharmacy',
             pharmacyAddress: settingsObj.pharmacyAddress || 'Block A, Gulberg III, Lahore',
-            pharmacyPhone: settingsObj.pharmacyPhone || '+92 42 1234567',
-            pharmacyEmail: settingsObj.pharmacyEmail || 'info@alshifapharmacy.com',
-            pharmacyLicense: settingsObj.pharmacyLicense || 'PHR-LHR-2024-001',
+            pharmacyPhone: settingsObj.pharmacyPhone || process.env.DEFAULT_PHARMACY_PHONE || '+92 42 1234567',
+            pharmacyEmail: settingsObj.pharmacyEmail || process.env.DEFAULT_PHARMACY_EMAIL || 'info@medibillpulse.com',
+            pharmacyLicense: settingsObj.pharmacyLicense || process.env.DEFAULT_PHARMACY_LICENSE || 'PHR-LHR-2024-001',
             pharmacyTaxNumber: settingsObj.pharmacyTaxNumber || '1234567890123'
         };
         res.json({

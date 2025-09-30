@@ -185,7 +185,7 @@ const createUser = async (req, res) => {
                 });
             }
         }
-        const hashedPassword = await bcryptjs_1.default.hash(userData.password, 12);
+        const hashedPassword = await bcryptjs_1.default.hash(userData.password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
         const currentUserId = req.user?.id;
         const currentUserAdminId = req.user?.createdBy;
         const user = await prisma.user.create({
@@ -257,7 +257,7 @@ const updateUser = async (req, res) => {
             }
         }
         if (updateData.password) {
-            updateData.password = await bcryptjs_1.default.hash(updateData.password, 12);
+            updateData.password = await bcryptjs_1.default.hash(updateData.password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
         }
         const user = await prisma.user.update({
             where: { id },

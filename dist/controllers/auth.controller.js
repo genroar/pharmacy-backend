@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getProfile = exports.register = exports.login = void 0;
+exports.updateProfile = exports.changePassword = exports.getProfile = exports.register = exports.login = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const client_1 = require("@prisma/client");
@@ -136,7 +136,7 @@ const register = async (req, res) => {
         let branch;
         let user;
         if (branchData && (role === 'ADMIN' || role === 'SUPERADMIN')) {
-            const hashedPassword = await bcryptjs_1.default.hash(password, 12);
+            const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
             user = await prisma.user.create({
                 data: {
                     username,
@@ -179,7 +179,7 @@ const register = async (req, res) => {
                 });
                 return;
             }
-            const hashedPassword = await bcryptjs_1.default.hash(password, 12);
+            const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
             user = await prisma.user.create({
                 data: {
                     username,
@@ -263,4 +263,118 @@ const getProfile = async (req, res) => {
     }
 };
 exports.getProfile = getProfile;
+const changePasswordSchema = joi_1.default.object({
+    currentPassword: joi_1.default.string().required(),
+    newPassword: joi_1.default.string().min(6).required()
+});
+const changePassword = async (req, res) => {
+    try {
+        const { error } = changePasswordSchema.validate(req.body);
+        if (error) {
+            res.status(400).json({
+                success: false,
+                message: 'Validation error',
+                errors: error.details.map(detail => detail.message)
+            });
+            return;
+        }
+        const userId = req.user.id;
+        const { currentPassword, newPassword } = req.body;
+        const user = await prisma.user.findUnique({
+            where: { id: userId }
+        });
+        if (!user) {
+            res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+            return;
+        }
+        const isCurrentPasswordValid = await bcryptjs_1.default.compare(currentPassword, user.password);
+        if (!isCurrentPasswordValid) {
+            res.status(400).json({
+                success: false,
+                message: 'Current password is incorrect'
+            });
+            return;
+        }
+        const hashedNewPassword = await bcryptjs_1.default.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+        await prisma.user.update({
+            where: { id: userId },
+            data: { password: hashedNewPassword }
+        });
+        res.json({
+            success: true,
+            message: 'Password changed successfully'
+        });
+    }
+    catch (error) {
+        console.error('Change password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.changePassword = changePassword;
+const updateProfileSchema = joi_1.default.object({
+    name: joi_1.default.string().optional(),
+    email: joi_1.default.string().email().optional()
+});
+const updateProfile = async (req, res) => {
+    try {
+        const { error } = updateProfileSchema.validate(req.body);
+        if (error) {
+            res.status(400).json({
+                success: false,
+                message: 'Validation error',
+                errors: error.details.map(detail => detail.message)
+            });
+            return;
+        }
+        const userId = req.user.id;
+        const { name, email } = req.body;
+        if (email) {
+            const existingUser = await prisma.user.findFirst({
+                where: {
+                    email,
+                    id: { not: userId }
+                }
+            });
+            if (existingUser) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Email is already taken by another user'
+                });
+                return;
+            }
+        }
+        const updatedUser = await prisma.user.update({
+            where: { id: userId },
+            data: {
+                ...(name && { name }),
+                ...(email && { email })
+            }
+        });
+        res.json({
+            success: true,
+            message: 'Profile updated successfully',
+            data: {
+                id: updatedUser.id,
+                name: updatedUser.name,
+                email: updatedUser.email,
+                username: updatedUser.username,
+                role: updatedUser.role
+            }
+        });
+    }
+    catch (error) {
+        console.error('Update profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.updateProfile = updateProfile;
 //# sourceMappingURL=auth.controller.js.map

@@ -207,7 +207,7 @@ const createProduct = async (req, res) => {
                         name: 'Default Supplier',
                         contactPerson: 'System Generated',
                         phone: '+92 300 0000000',
-                        email: 'system@default.com',
+                        email: process.env.SYSTEM_EMAIL || 'system@default.com',
                         address: 'Auto-created for imports',
                         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                         isActive: true
@@ -532,7 +532,12 @@ const bulkImportProducts = async (req, res) => {
         };
         for (const productData of products) {
             try {
-                console.log('Processing product:', productData.name);
+                console.log('=== PROCESSING PRODUCT ===');
+                console.log('Product data received:', productData);
+                console.log('Product name:', productData.name);
+                console.log('Product selling price:', productData.sellingPrice);
+                console.log('Product category ID:', productData.categoryId);
+                console.log('Product branch ID:', productData.branchId);
                 if (!productData.name || productData.name.trim() === '') {
                     productData.name = `Product_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
                 }
@@ -603,7 +608,7 @@ const bulkImportProducts = async (req, res) => {
                                 name: 'Default Supplier',
                                 contactPerson: 'System Generated',
                                 phone: '+92 300 0000000',
-                                email: 'system@default.com',
+                                email: process.env.SYSTEM_EMAIL || 'system@default.com',
                                 address: 'Auto-created for imports',
                                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                                 isActive: true
@@ -628,7 +633,7 @@ const bulkImportProducts = async (req, res) => {
                                 name: 'Default Branch',
                                 address: 'Auto-created for imports',
                                 phone: '+92 300 0000000',
-                                email: 'default@branch.com',
+                                email: process.env.BRANCH_EMAIL || 'default@branch.com',
                                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                                 isActive: true
                             }
@@ -791,11 +796,13 @@ const bulkImportProducts = async (req, res) => {
                 });
             }
             catch (error) {
-                console.error(`Error processing product ${productData.name}:`, error);
+                console.error(`=== ERROR PROCESSING PRODUCT ${productData.name} ===`);
+                console.error('Product data that failed:', productData);
                 console.error('Error details:', {
                     message: error.message,
                     code: error.code,
-                    meta: error.meta
+                    meta: error.meta,
+                    stack: error.stack
                 });
                 let errorMessage = error.message || 'Unknown error';
                 if (error.code === 'P2002') {
@@ -815,6 +822,13 @@ const bulkImportProducts = async (req, res) => {
                 else if (error.code === 'P2025') {
                     errorMessage = `Record not found: ${error.meta?.cause}`;
                 }
+                else if (error.message?.includes('Invalid value')) {
+                    errorMessage = `Invalid data format: ${error.message}`;
+                }
+                else if (error.message?.includes('Required field')) {
+                    errorMessage = `Missing required field: ${error.message}`;
+                }
+                console.error(`Final error message for ${productData.name}:`, errorMessage);
                 results.failed.push({
                     product: productData,
                     error: errorMessage

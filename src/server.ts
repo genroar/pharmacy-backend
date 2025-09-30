@@ -202,14 +202,14 @@ async function startServer() {
     console.log('💡 Please check your database configuration');
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
     console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
     console.log('='.repeat(60));
     console.log(`🌐 Server running on port: ${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`📋 API Base URL: http://localhost:${PORT}/api`);
+    console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
+    console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
     console.log('='.repeat(60));
   });
 }

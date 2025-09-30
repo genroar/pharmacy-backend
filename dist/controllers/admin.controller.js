@@ -230,7 +230,7 @@ const createAdmin = async (req, res) => {
             return;
         }
         const username = email.split('@')[0] + '_admin';
-        const hashedPassword = await require('bcryptjs').hash(password, 12);
+        const hashedPassword = await require('bcryptjs').hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
         const currentUser = req.user;
         if (!currentUser) {
             res.status(401).json({
@@ -240,6 +240,15 @@ const createAdmin = async (req, res) => {
             return;
         }
         const result = await prisma.$transaction(async (tx) => {
+            const branch = await tx.branch.create({
+                data: {
+                    name: company,
+                    address: 'Default Address',
+                    phone: finalPhone,
+                    email,
+                    createdBy: currentUser.id
+                }
+            });
             const admin = await tx.user.create({
                 data: {
                     username,
@@ -247,27 +256,25 @@ const createAdmin = async (req, res) => {
                     password: hashedPassword,
                     name,
                     role: 'ADMIN',
-                    branchId: 'temp',
+                    branchId: branch.id,
                     createdBy: currentUser.id,
                     isActive: true
-                }
-            });
-            const updatedAdmin = await tx.user.update({
-                where: { id: admin.id },
-                data: { createdBy: admin.id }
-            });
-            const branch = await tx.branch.create({
-                data: {
-                    name: company,
-                    address: 'Default Address',
-                    phone: finalPhone,
-                    email,
-                    createdBy: admin.id
+                },
+                include: {
+                    branch: {
+                        select: {
+                            id: true,
+                            name: true,
+                            address: true,
+                            phone: true,
+                            email: true
+                        }
+                    }
                 }
             });
             const finalAdmin = await tx.user.update({
                 where: { id: admin.id },
-                data: { branchId: branch.id },
+                data: { createdBy: admin.id },
                 include: {
                     branch: {
                         select: {

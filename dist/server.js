@@ -71,13 +71,15 @@ const corsOptions = {
             return callback(null, true);
         const allowedOrigins = [
             process.env.FRONTEND_URL || 'http://localhost:5173',
-            'http://localhost:8080',
-            'http://localhost:8081',
-            'http://localhost:3000',
-            'http://127.0.0.1:8080',
-            'http://127.0.0.1:8081',
-            'http://127.0.0.1:5173',
-            'http://127.0.0.1:3000'
+            ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [
+                'http://localhost:8080',
+                'http://localhost:8081',
+                'http://localhost:3000',
+                'http://127.0.0.1:8080',
+                'http://127.0.0.1:8081',
+                'http://127.0.0.1:5173',
+                'http://127.0.0.1:3000'
+            ])
         ];
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
@@ -95,21 +97,23 @@ const corsOptions = {
 app.use((0, cors_1.default)(corsOptions));
 app.options('*', (0, cors_1.default)(corsOptions));
 const limiter = (0, express_rate_limit_1.default)({
-    windowMs: 15 * 60 * 1000,
-    max: 1000,
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'),
+    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '1000'),
     message: 'Too many requests from this IP, please try again later.',
     standardHeaders: true,
     legacyHeaders: false,
 });
 app.use('/api/', limiter);
-app.use(express_1.default.json({ limit: '10mb' }));
-app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express_1.default.json({ limit: process.env.MAX_FILE_SIZE || '10mb' }));
+app.use(express_1.default.urlencoded({ extended: true, limit: process.env.MAX_FILE_SIZE || '10mb' }));
 app.use((0, compression_1.default)());
-if (process.env.NODE_ENV === 'development') {
-    app.use((0, morgan_1.default)('dev'));
-}
-else {
-    app.use((0, morgan_1.default)('combined'));
+if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
+    if (process.env.NODE_ENV === 'development') {
+        app.use((0, morgan_1.default)('dev'));
+    }
+    else {
+        app.use((0, morgan_1.default)('combined'));
+    }
 }
 app.get('/health', (req, res) => {
     res.status(200).json({
