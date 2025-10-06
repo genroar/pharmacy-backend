@@ -142,7 +142,34 @@ if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
 }
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  try {
+    // Test database connection
+    await prisma.$queryRaw`SELECT 1`;
+
+    res.status(200).json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV,
+      database: 'connected'
+    });
+  } catch (error) {
+    // Even if database fails, return 200 for basic health check
+    // Railway needs the server to be accessible
+    res.status(200).json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV,
+      database: 'disconnected',
+      warning: 'Database connection failed but server is running'
+    });
+  }
+});
+
+// Simple health check for Railway (no database dependency)
+app.get('/ping', (req, res) => {
   res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -206,14 +233,7 @@ const PORT: number = (() => {
 
 // Start server with database connection check
 async function startServer(): Promise<void> {
-  // Test database connection first
-  const dbConnected = await testDatabaseConnection();
-
-  if (!dbConnected) {
-    console.log('⚠️  Server starting with database connection issues...');
-    console.log('💡 Please check your database configuration');
-  }
-
+  // Start the server immediately
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
     console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
@@ -236,6 +256,16 @@ async function startServer(): Promise<void> {
     }
     process.exit(1);
   });
+
+  // Test database connection in background (non-blocking)
+  setTimeout(async () => {
+    const dbConnected = await testDatabaseConnection();
+    if (!dbConnected) {
+      console.log('⚠️  Database connection issues detected...');
+      console.log('💡 Server is running but database may not be accessible');
+      console.log('💡 Check your DATABASE_URL environment variable');
+    }
+  }, 1000); // Wait 1 second after server starts
 }
 
 startServer();

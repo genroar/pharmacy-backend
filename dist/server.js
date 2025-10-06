@@ -115,7 +115,29 @@ if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
         app.use((0, morgan_1.default)('combined'));
     }
 }
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+    try {
+        await prisma.$queryRaw `SELECT 1`;
+        res.status(200).json({
+            status: 'OK',
+            timestamp: new Date().toISOString(),
+            uptime: process.uptime(),
+            environment: process.env.NODE_ENV,
+            database: 'connected'
+        });
+    }
+    catch (error) {
+        res.status(200).json({
+            status: 'OK',
+            timestamp: new Date().toISOString(),
+            uptime: process.uptime(),
+            environment: process.env.NODE_ENV,
+            database: 'disconnected',
+            warning: 'Database connection failed but server is running'
+        });
+    }
+});
+app.get('/ping', (req, res) => {
     res.status(200).json({
         status: 'OK',
         timestamp: new Date().toISOString(),
@@ -167,11 +189,6 @@ const PORT = (() => {
     return parsed;
 })();
 async function startServer() {
-    const dbConnected = await testDatabaseConnection();
-    if (!dbConnected) {
-        console.log('⚠️  Server starting with database connection issues...');
-        console.log('💡 Please check your database configuration');
-    }
     const server = app.listen(PORT, '0.0.0.0', () => {
         console.log('='.repeat(60));
         console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
@@ -194,6 +211,14 @@ async function startServer() {
         }
         process.exit(1);
     });
+    setTimeout(async () => {
+        const dbConnected = await testDatabaseConnection();
+        if (!dbConnected) {
+            console.log('⚠️  Database connection issues detected...');
+            console.log('💡 Server is running but database may not be accessible');
+            console.log('💡 Check your DATABASE_URL environment variable');
+        }
+    }, 1000);
 }
 startServer();
 exports.default = app;

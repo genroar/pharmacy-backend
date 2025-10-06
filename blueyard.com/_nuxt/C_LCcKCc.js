@@ -1,0 +1,1 @@
+import{ac as t}from"./B-3NFgV6.js";function c(i){const o={title:i.title};i.description&&(o.description=i.description,o.ogDescription=i.description),i.ogDescription&&(o.ogDescription=i.ogDescription),t(o)}export{c as u};
