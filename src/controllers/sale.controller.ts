@@ -383,12 +383,23 @@ export const createSale = async (req: AuthRequest, res: Response) => {
 
     // Use transaction to ensure data consistency
     const result = await prisma.$transaction(async (tx) => {
+      // Get companyId from branch
+      const branch = await tx.branch.findUnique({
+        where: { id: saleData.branchId },
+        select: { companyId: true }
+      });
+
+      if (!branch) {
+        throw new Error('Branch not found');
+      }
+
       // Create sale
       const sale = await tx.sale.create({
         data: {
           customerId: saleData.customerId,
           userId: userId,
           branchId: saleData.branchId,
+          companyId: branch.companyId,
           createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
           subtotal,
           taxAmount,

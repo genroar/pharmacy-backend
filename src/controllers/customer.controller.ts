@@ -220,9 +220,23 @@ export const createCustomer = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Get the branch to find the companyId
+    const branch = await prisma.branch.findUnique({
+      where: { id: customerData.branchId },
+      select: { companyId: true }
+    });
+
+    if (!branch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
     const customer = await prisma.customer.create({
       data: {
         ...customerData,
+        companyId: branch.companyId,
         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
       },
       include: {

@@ -19,7 +19,7 @@ const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
   name: Joi.string().required(),
-  role: Joi.string().valid('PRODUCT_OWNER', 'SUPERADMIN', 'ADMIN', 'MANAGER', 'PHARMACIST', 'CASHIER').required(),
+  role: Joi.string().valid('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER').required(),
   branchId: Joi.string().optional(),
   branchData: Joi.object({
     name: Joi.string().required(),
@@ -135,33 +135,42 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     const { username, email, password, name, role, branchId, branchData } = req.body;
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username },
-          { email }
-        ]
-      }
+    // Check if username already exists
+    const existingUsername = await prisma.user.findUnique({
+      where: { username }
     });
 
-    if (existingUser) {
+    if (existingUsername) {
       res.status(400).json({
         success: false,
-        message: 'User with this username or email already exists'
+        message: 'Username already exists',
+        field: 'username'
       });
       return;
     }
 
-    let finalBranchId = branchId;
-    let branch;
+    // Check if email already exists
+    const existingEmail = await prisma.user.findUnique({
+      where: { email }
+    });
+
+    if (existingEmail) {
+      res.status(400).json({
+        success: false,
+        message: 'Email already exists',
+        field: 'email'
+      });
+      return;
+    }
+
     let user;
 
-    // If branchData is provided, create a new branch (for admin registration)
-    if (branchData && (role === 'ADMIN' || role === 'SUPERADMIN')) {
-      // First create the user to get the createdBy
-      const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
+    // For ADMIN and SUPERADMIN users, create user without branch/company initially
+    // They will create companies and branches from the dashboard
+    if (role === 'ADMIN' || role === 'SUPERADMIN') {
       user = await prisma.user.create({
         data: {
           username,
@@ -169,7 +178,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           password: hashedPassword,
           name,
           role,
-          branchId: 'temp', // Will be updated after branch creation
+          branchId: null, // No branch initially
+          companyId: null, // No company initially
           createdBy: null // Will be updated to self-reference after user creation
         }
       });
@@ -179,29 +189,18 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         where: { id: user.id },
         data: { createdBy: user.id }
       });
+    } else {
+      // For other roles (MANAGER, CASHIER), they need to be assigned to a branch
+      if (!branchId) {
+        res.status(400).json({
+          success: false,
+          message: 'Branch ID is required for non-admin users'
+        });
+        return;
+      }
 
-      // Now create the branch
-      branch = await prisma.branch.create({
-        data: {
-          name: branchData.name,
-          address: branchData.address,
-          phone: branchData.phone,
-          email: email, // Use admin email as branch email
-          isActive: true
-        }
-      });
-
-      finalBranchId = branch.id;
-
-      // Update the user with the branchId
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: { branchId: finalBranchId },
-        include: { branch: true }
-      });
-    } else if (branchId) {
       // Check if existing branch exists
-      branch = await prisma.branch.findUnique({
+      const branch = await prisma.branch.findUnique({
         where: { id: branchId }
       });
 
@@ -213,10 +212,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         return;
       }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
-
-      // Create user
+      // Create user with branch assignment
       user = await prisma.user.create({
         data: {
           username,
@@ -224,19 +220,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           password: hashedPassword,
           name,
           role,
-          branchId: finalBranchId,
-          createdBy: (role === 'ADMIN' || role === 'SUPERADMIN') ? null : undefined // Self-referencing for admin users
+          branchId: branchId,
+          companyId: branch.companyId,
+          createdBy: null // Will be set by the admin who creates this user
         },
         include: {
-          branch: true
+          branch: true,
+          company: true
         }
       });
-    } else {
-      res.status(400).json({
-        success: false,
-        message: 'Either branchId or branchData must be provided'
-      });
-      return;
     }
 
     // Generate JWT token
@@ -272,9 +264,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     console.error('Register error:', error);
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : 'Unknown'
+    });
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : undefined
     });
   }
 };

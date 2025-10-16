@@ -276,18 +276,31 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
 
     // Create admin user and branch in a transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Create a new branch for this admin first
-      const branch = await tx.branch.create({
+      // Create a new company first
+      const newCompany = await tx.company.create({
         data: {
           name: company,
+          description: `Company for ${name}`,
           address: 'Default Address', // Can be updated later
           phone: finalPhone,
           email,
-          createdBy: currentUser.id // Link branch to the super admin who created it
+          createdBy: currentUser.id
         }
       });
 
-      // Create admin user with the correct branchId
+      // Create a new branch for this admin
+      const branch = await tx.branch.create({
+        data: {
+          name: `${company} - Main Branch`,
+          address: 'Default Address', // Can be updated later
+          phone: finalPhone,
+          email,
+          companyId: newCompany.id,
+          createdBy: currentUser.id
+        }
+      });
+
+      // Create admin user with the correct branchId and companyId
       const admin = await tx.user.create({
         data: {
           username,
@@ -296,6 +309,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
           name,
           role: 'ADMIN',
           branchId: branch.id, // Use the actual branch ID
+          companyId: newCompany.id, // Use the actual company ID
           createdBy: currentUser.id, // Who created this admin
           isActive: true
         },

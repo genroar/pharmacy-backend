@@ -10,6 +10,7 @@ export interface AuthRequest extends Request {
     username: string;
     role: string;
     branchId?: string;
+    companyId?: string;
     createdBy?: string; // For data isolation
   };
 }
@@ -32,6 +33,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
         username: true,
         role: true,
         branchId: true,
+        companyId: true,
         createdBy: true,
         isActive: true
       }
@@ -62,6 +64,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       username: user.username,
       role: user.role,
       branchId: user.branchId || undefined,
+      companyId: user.companyId || undefined,
       createdBy: createdBy || undefined
     };
     return next();

@@ -273,6 +273,19 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Get the branch to find the companyId
+    const branch = await prisma.branch.findUnique({
+      where: { id: productData.branchId },
+      select: { companyId: true }
+    });
+
+    if (!branch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Branch not found'
+      });
+    }
+
     const product = await prisma.product.create({
       data: {
         name: productData.name,
@@ -281,6 +294,7 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
         categoryId: productData.categoryId,
         supplierId: productData.supplierId,
         branchId: productData.branchId,
+        companyId: branch.companyId,
         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id', // Use createdBy for data isolation
         costPrice: productData.costPrice,
         sellingPrice: productData.sellingPrice,
@@ -743,13 +757,26 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           if (availableBranch) {
             productData.branchId = availableBranch.id;
           } else {
-            // Create a default branch if none exists
+            // Create a default company and branch if none exists
+            const defaultCompany = await prisma.company.create({
+              data: {
+                name: 'Default Company',
+                description: 'Auto-created for imports',
+                address: 'Auto-created for imports',
+                phone: '+92 300 0000000',
+                email: process.env.COMPANY_EMAIL || 'default@company.com',
+                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
+                isActive: true
+              }
+            });
+
             const defaultBranch = await prisma.branch.create({
               data: {
                 name: 'Default Branch',
                 address: 'Auto-created for imports',
                 phone: '+92 300 0000000',
                 email: process.env.BRANCH_EMAIL || 'default@branch.com',
+                companyId: defaultCompany.id,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                 isActive: true
               }
@@ -892,6 +919,19 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           }
         }
 
+        // Get companyId from branch
+        const branchForCompany = await prisma.branch.findUnique({
+          where: { id: productData.branchId },
+          select: { companyId: true }
+        });
+
+        if (!branchForCompany) {
+          return res.status(400).json({
+            success: false,
+            message: 'Branch not found'
+          });
+        }
+
         const product = await prisma.product.create({
           data: {
             name: productData.name,
@@ -899,6 +939,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
             categoryId: productData.categoryId,
             supplierId: productData.supplierId,
             branchId: productData.branchId,
+            companyId: branchForCompany.companyId,
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
             costPrice: productData.costPrice || 0,
             sellingPrice: productData.sellingPrice,

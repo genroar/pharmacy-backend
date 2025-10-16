@@ -11,6 +11,7 @@ const createBranchSchema = Joi.object({
   address: Joi.string().required(),
   phone: Joi.string().required(),
   email: Joi.string().email().required(),
+  companyId: Joi.string().required(),
   managerId: Joi.string().allow(null)
 });
 
@@ -19,6 +20,7 @@ const updateBranchSchema = Joi.object({
   address: Joi.string(),
   phone: Joi.string(),
   email: Joi.string().email(),
+  companyId: Joi.string(),
   managerId: Joi.string().allow(null),
   isActive: Joi.boolean()
 });
@@ -66,6 +68,12 @@ export const getBranches = async (req: AuthRequest, res: Response) => {
         skip,
         take,
         include: {
+          company: {
+            select: {
+              id: true,
+              name: true
+            }
+          },
           _count: {
             select: {
               users: true,
@@ -107,6 +115,12 @@ export const getBranch = async (req: Request, res: Response) => {
     const branch = await prisma.branch.findUnique({
       where: { id },
       include: {
+        company: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
         users: {
           select: {
             id: true,
@@ -158,38 +172,60 @@ export const createBranch = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const branchData = req.body;
+    const { name, address, phone, email, companyId, managerId } = req.body;
 
-    // Determine createdBy for data isolation
-    let createdBy: string;
-    if (req.user?.role === 'ADMIN') {
-      // For ADMIN users, use their own ID as createdBy (self-referencing)
-      createdBy = req.user.id;
-    } else {
-      // For other users, use their createdBy or fallback to their ID
-      createdBy = req.user?.createdBy || req.user?.id || 'default-admin-id';
+    // Verify that the company exists and user has access to it
+    const company = await prisma.company.findUnique({
+      where: { id: companyId }
+    });
+
+    if (!company) {
+      return res.status(404).json({
+        success: false,
+        message: 'Company not found'
+      });
     }
 
+    // Check if user has access to this company
+    if (req.user?.role !== 'SUPERADMIN' && company.createdBy !== req.user?.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied to this company'
+      });
+    }
 
-    // Check if branch name already exists for this admin
+    // Check if branch name already exists for this company
     const existingBranch = await prisma.branch.findFirst({
       where: {
-        name: branchData.name,
-        createdBy: createdBy
+        name: name,
+        companyId: companyId
       }
     });
 
     if (existingBranch) {
       return res.status(400).json({
         success: false,
-        message: 'Branch with this name already exists'
+        message: 'Branch with this name already exists in this company'
       });
     }
 
     const branch = await prisma.branch.create({
       data: {
-        ...branchData,
-        createdBy: createdBy // Add createdBy for data isolation
+        name,
+        address,
+        phone,
+        email,
+        companyId,
+        managerId,
+        createdBy: req.user?.id
+      },
+      include: {
+        company: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
       }
     });
 

@@ -14,17 +14,20 @@ model User {
   password      String
   name          String
   role          UserRole        @default(CASHIER)
-  branchId      String
+  branchId      String?
+  companyId     String?
   isActive      Boolean         @default(true)
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   createdBy     String?
-  card_details  card_details[]
-  receipts      Receipt[]
-  refunds       Refund[]
-  sales         Sale[]
-  subscriptions subscriptions[]
-  branch        Branch          @relation(fields: [branchId], references: [id])
+  card_details      card_details[]
+  receipts          Receipt[]
+  refunds           Refund[]
+  sales             Sale[]
+  subscriptions     subscriptions[]
+  scheduledShifts   ScheduledShiftUser[]
+  branch            Branch?         @relation(fields: [branchId], references: [id])
+  company           Company?        @relation(fields: [companyId], references: [id])
 
   @@map("users")
 }
@@ -42,6 +45,7 @@ model Employee {
   hireDate                 DateTime
   status                   EmployeeStatus @default(ACTIVE)
   branchId                 String
+  companyId                String
   emergencyContactName     String?
   emergencyContactPhone    String?
   emergencyContactRelation String?
@@ -51,32 +55,60 @@ model Employee {
   attendance               Attendance[]
   commissions              Commission[]
   branch                   Branch         @relation(fields: [branchId], references: [id])
+  company                  Company        @relation(fields: [companyId], references: [id])
   shifts                   Shift[]
 
   @@map("employees")
 }
 
+model Company {
+  id           String       @id @default(cuid())
+  name         String       @unique
+  description  String?
+  address      String?
+  phone        String?
+  email        String?
+  website      String?
+  businessType BusinessType?
+  createdBy    String?
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  branches     Branch[]
+  users        User[]
+  employees    Employee[]
+  products     Product[]
+  customers    Customer[]
+  sales        Sale[]
+
+  @@map("companies")
+}
+
 model Branch {
   id          String       @id @default(cuid())
-  name        String       @unique
+  name        String
   address     String
   phone       String
   email       String
+  companyId   String
   managerId   String?
   createdBy   String?
   isActive    Boolean      @default(true)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  attendance  Attendance[]
-  commissions Commission[]
-  customers   Customer[]
-  employees   Employee[]
-  products    Product[]
-  receipts    Receipt[]
-  sales       Sale[]
-  shifts      Shift[]
-  users       User[]
+  attendance      Attendance[]
+  commissions     Commission[]
+  customers       Customer[]
+  employees       Employee[]
+  products        Product[]
+  receipts        Receipt[]
+  sales           Sale[]
+  shifts          Shift[]
+  scheduledShifts ScheduledShift[]
+  users           User[]
+  company         Company      @relation(fields: [companyId], references: [id])
 
+  @@unique([name, companyId], name: "branch_name_per_company")
   @@map("branches")
 }
 
@@ -117,6 +149,7 @@ model Product {
   categoryId           String
   supplierId           String
   branchId             String
+  companyId            String
   createdBy            String?
   costPrice            Float
   sellingPrice         Float
@@ -132,6 +165,7 @@ model Product {
   updatedAt            DateTime        @updatedAt
   expiryDate           DateTime?
   branch               Branch          @relation(fields: [branchId], references: [id])
+  company              Company         @relation(fields: [companyId], references: [id])
   category             Category        @relation(fields: [categoryId], references: [id])
   supplier             Supplier        @relation(fields: [supplierId], references: [id])
   refundItems          RefundItem[]
@@ -162,6 +196,7 @@ model Customer {
   email          String?
   address        String?
   branchId       String
+  companyId      String
   createdBy      String?
   totalPurchases Float     @default(0)
   loyaltyPoints  Int       @default(0)
@@ -171,6 +206,7 @@ model Customer {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   branch         Branch    @relation(fields: [branchId], references: [id])
+  company        Company   @relation(fields: [companyId], references: [id])
   sales          Sale[]
 
   @@map("customers")
@@ -181,6 +217,7 @@ model Sale {
   customerId     String?
   userId         String
   branchId       String
+  companyId      String
   createdBy      String?
   subtotal       Float
   taxAmount      Float
@@ -195,6 +232,7 @@ model Sale {
   refunds        Refund[]      @relation("SaleRefunds")
   items          SaleItem[]
   branch         Branch        @relation(fields: [branchId], references: [id])
+  company        Company       @relation(fields: [companyId], references: [id])
   customer       Customer?     @relation(fields: [customerId], references: [id])
   user           User          @relation(fields: [userId], references: [id])
 
@@ -371,6 +409,37 @@ model Settings {
   @@map("settings")
 }
 
+model ScheduledShift {
+  id              String                @id @default(cuid())
+  name            String
+  startTime       String                // Time in HH:MM format
+  endTime         String                // Time in HH:MM format
+  date            DateTime              // Date of the shift
+  branchId        String
+  maxUsers        Int                   @default(1)
+  status          ScheduledShiftStatus  @default(SCHEDULED)
+  notes           String?
+  assignedUsers   ScheduledShiftUser[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  branch          Branch                @relation(fields: [branchId], references: [id])
+
+  @@map("scheduled_shifts")
+}
+
+model ScheduledShiftUser {
+  id                String         @id @default(cuid())
+  scheduledShiftId  String
+  userId            String
+  assignedAt        DateTime       @default(now())
+  assignedBy        String?
+  scheduledShift    ScheduledShift @relation(fields: [scheduledShiftId], references: [id], onDelete: Cascade)
+  user              User           @relation(fields: [userId], references: [id])
+
+  @@unique([scheduledShiftId, userId], name: "unique_shift_user")
+  @@map("scheduled_shift_users")
+}
+
 enum UserRole {
   SUPERADMIN
   ADMIN
@@ -420,6 +489,13 @@ enum ShiftStatus {
   CANCELLED
 }
 
+enum ScheduledShiftStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
 enum CommissionStatus {
   PENDING
   APPROVED
@@ -452,4 +528,11 @@ enum SubscriptionStatus {
   EXPIRED
   CANCELLED
   PENDING
+}
+
+enum BusinessType {
+  PHARMACY
+  STORE
+  HOTEL
+  CLINIC
 }

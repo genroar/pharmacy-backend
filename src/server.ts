@@ -10,6 +10,7 @@ import { PrismaClient } from '@prisma/client';
 // Import routes
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
+import companyRoutes from './routes/company.routes';
 import branchRoutes from './routes/branch.routes';
 import productRoutes from './routes/product.routes';
 import customerRoutes from './routes/customer.routes';
@@ -22,6 +23,7 @@ import supplierRoutes from './routes/supplier.routes';
 import employeeRoutes from './routes/employee.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import shiftRoutes from './routes/shift.routes';
+import scheduledShiftRoutes from './routes/scheduledShift.routes';
 import commissionRoutes from './routes/commission.routes';
 import roleRoutes from './routes/role.routes';
 import refundRoutes from './routes/refund.routes';
@@ -181,6 +183,7 @@ app.get('/ping', (req, res) => {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/companies', companyRoutes);
 app.use('/api/branches', branchRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/customers', customerRoutes);
@@ -193,6 +196,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/shifts', shiftRoutes);
+app.use('/api/scheduled-shifts', scheduledShiftRoutes);
 app.use('/api/commissions', commissionRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/refunds', refundRoutes);

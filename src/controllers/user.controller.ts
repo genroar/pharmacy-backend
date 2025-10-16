@@ -228,6 +228,7 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     // Get the current user ID and createdBy from the request (set by auth middleware)
     const currentUserId = req.user?.id;
     const currentUserAdminId = req.user?.createdBy;
+    const currentUserCompanyId = req.user?.companyId;
 
     // Create user
     const user = await prisma.user.create({
@@ -235,7 +236,8 @@ export const createUser = async (req: AuthRequest, res: Response) => {
         ...userData,
         password: hashedPassword,
         createdBy: currentUserAdminId || currentUserId, // Set createdBy for data isolation
-        branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : 'temp'
+        companyId: currentUserCompanyId, // Set companyId for data isolation
+        branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null
       },
       include: {
         branch: {
