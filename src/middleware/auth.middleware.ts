@@ -12,6 +12,8 @@ export interface AuthRequest extends Request {
     branchId?: string;
     companyId?: string;
     createdBy?: string; // For data isolation
+    selectedCompanyId?: string; // Currently selected company
+    selectedBranchId?: string; // Currently selected branch
   };
 }
 
@@ -59,13 +61,26 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       createdBy = user.id;
     }
 
+    // Get context headers from frontend
+    const selectedCompanyId = req.header('X-Company-ID');
+    const selectedBranchId = req.header('X-Branch-ID');
+
+    // Debug: Log headers
+    console.log('🔍 Auth middleware - Headers received:', {
+      'X-Company-ID': selectedCompanyId,
+      'X-Branch-ID': selectedBranchId,
+      'All headers': req.headers
+    });
+
     req.user = {
       id: user.id,
       username: user.username,
       role: user.role,
       branchId: user.branchId || undefined,
       companyId: user.companyId || undefined,
-      createdBy: createdBy || undefined
+      createdBy: createdBy || undefined,
+      selectedCompanyId: selectedCompanyId || undefined,
+      selectedBranchId: selectedBranchId || undefined
     };
     return next();
   } catch (error) {
@@ -94,22 +109,30 @@ export const authorize = (...roles: string[]) => {
  * This ensures all database queries are automatically scoped to the correct admin
  */
 export const buildAdminWhereClause = (req: AuthRequest, baseWhere: any = {}) => {
-  // SUPERADMIN can access all data
+  const whereClause = { ...baseWhere };
+
+  // Apply company context filtering if available
+  if (req.user?.selectedCompanyId) {
+    whereClause.companyId = req.user.selectedCompanyId;
+    console.log('🏢 Adding company context to where clause:', req.user.selectedCompanyId);
+  }
+
+  // SUPERADMIN can access all data (but still filtered by company if selected)
   if (req.user?.role === 'SUPERADMIN') {
-    return baseWhere;
+    return whereClause;
   }
 
   // All other users are scoped to their admin's data
   if (req.user?.createdBy) {
     return {
-      ...baseWhere,
+      ...whereClause,
       createdBy: req.user.createdBy
     };
   }
 
   // If no admin context, return empty where clause (will return no results)
   return {
-    ...baseWhere,
+    ...whereClause,
     createdBy: 'non-existent-admin-id' // This will return no results
   };
 };
@@ -119,20 +142,28 @@ export const buildAdminWhereClause = (req: AuthRequest, baseWhere: any = {}) => 
  * This ensures all database queries are automatically scoped to the correct branch
  */
 export const buildBranchWhereClause = (req: AuthRequest, baseWhere: any = {}) => {
-  // SUPERADMIN can access all data
+  const whereClause = { ...baseWhere };
+
+  // Apply company context filtering if available
+  if (req.user?.selectedCompanyId) {
+    whereClause.companyId = req.user.selectedCompanyId;
+    console.log('🏢 Adding company context to branch where clause:', req.user.selectedCompanyId);
+  }
+
+  // SUPERADMIN can access all data (but still filtered by company if selected)
   if (req.user?.role === 'SUPERADMIN') {
-    return baseWhere;
+    return whereClause;
   }
 
   // ADMIN can access all branches within their admin scope
   if (req.user?.role === 'ADMIN') {
-    return buildAdminWhereClause(req, baseWhere);
+    return buildAdminWhereClause(req, whereClause);
   }
 
   // MANAGER can only access data from their assigned branch
   if (req.user?.role === 'MANAGER' && req.user?.branchId) {
     return {
-      ...baseWhere,
+      ...whereClause,
       createdBy: req.user.createdBy,
       branchId: req.user.branchId
     };
@@ -140,12 +171,12 @@ export const buildBranchWhereClause = (req: AuthRequest, baseWhere: any = {}) =>
 
   // CASHIER can access all data within their admin group (for shared inventory)
   if (req.user?.role === 'CASHIER' && req.user?.createdBy) {
-    return buildAdminWhereClause(req, baseWhere);
+    return buildAdminWhereClause(req, whereClause);
   }
 
   // If no admin context, return empty where clause
   return {
-    ...baseWhere,
+    ...whereClause,
     createdBy: 'non-existent-admin-id' // This will return no results
   };
 };
@@ -155,20 +186,28 @@ export const buildBranchWhereClause = (req: AuthRequest, baseWhere: any = {}) =>
  * This is used for models like Refund that only have branchId through relations
  */
 export const buildBranchWhereClauseForRelation = (req: AuthRequest, baseWhere: any = {}) => {
-  // SUPERADMIN can access all data
+  const whereClause = { ...baseWhere };
+
+  // Apply company context filtering if available
+  if (req.user?.selectedCompanyId) {
+    whereClause.companyId = req.user.selectedCompanyId;
+    console.log('🏢 Adding company context to relation where clause:', req.user.selectedCompanyId);
+  }
+
+  // SUPERADMIN can access all data (but still filtered by company if selected)
   if (req.user?.role === 'SUPERADMIN') {
-    return baseWhere;
+    return whereClause;
   }
 
   // ADMIN can access all branches within their admin scope
   if (req.user?.role === 'ADMIN') {
-    return buildAdminWhereClause(req, baseWhere);
+    return buildAdminWhereClause(req, whereClause);
   }
 
   // MANAGER can only access data from their assigned branch
   if (req.user?.role === 'MANAGER' && req.user?.branchId) {
     return {
-      ...baseWhere,
+      ...whereClause,
       createdBy: req.user.createdBy
       // Note: branchId will be handled through the relation filter
     };
@@ -176,12 +215,12 @@ export const buildBranchWhereClauseForRelation = (req: AuthRequest, baseWhere: a
 
   // CASHIER can access all data within their admin group (for shared inventory)
   if (req.user?.role === 'CASHIER' && req.user?.createdBy) {
-    return buildAdminWhereClause(req, baseWhere);
+    return buildAdminWhereClause(req, whereClause);
   }
 
   // If no admin context, return empty where clause
   return {
-    ...baseWhere,
+    ...whereClause,
     createdBy: 'non-existent-admin-id' // This will return no results
   };
 };

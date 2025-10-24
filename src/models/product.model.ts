@@ -4,39 +4,41 @@
 export interface CreateProductData {
     name: string;
     description?: string;
+    formula?: string; // New field for product composition
     sku: string;
     categoryId: string;
     categoryName?: string; // For bulk import - category name when categoryId doesn't exist
     supplierId: string;
     branchId: string;
-    costPrice: number;
-    sellingPrice: number;
-    stock: number;
-    minStock: number;
-    maxStock?: bigint;
-    unitType: string;
-    unitsPerPack?: number;
     barcode?: string;
     requiresPrescription: boolean;
-  }
-
-  export interface UpdateProductData {
-    name?: string;
-    description?: string;
-    sku?: string;
-    categoryId?: string;
-    supplierId?: string;
-    branchId?: string;
+    // Temporary fields for backward compatibility (will be removed when frontend is updated)
     costPrice?: number;
     sellingPrice?: number;
     stock?: number;
     minStock?: number;
     maxStock?: bigint;
-    unitType?: string;
     unitsPerPack?: number;
+  }
+
+  export interface UpdateProductData {
+    name?: string;
+    description?: string;
+    formula?: string; // New field for product composition
+    sku?: string;
+    categoryId?: string;
+    supplierId?: string;
+    branchId?: string;
     barcode?: string;
     requiresPrescription?: boolean;
     isActive?: boolean;
+    // Temporary fields for backward compatibility (will be removed when frontend is updated)
+    costPrice?: number;
+    sellingPrice?: number;
+    stock?: number;
+    minStock?: number;
+    maxStock?: bigint;
+    unitsPerPack?: number;
   }
 
   export interface StockMovementData {

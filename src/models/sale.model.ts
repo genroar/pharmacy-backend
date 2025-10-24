@@ -7,13 +7,16 @@ export interface CreateSaleData {
   items: SaleItemData[];
   paymentMethod: PaymentMethod;
   discountAmount?: number;
+  discountPercentage?: number;
+  saleDate?: string;
 }
 
 export interface SaleItemData {
   productId: string;
   quantity: number;
   unitPrice: number;
-  batchNumber?: string;
+  batchId?: string; // Link to specific batch
+  batchNumber?: string; // Keep for backward compatibility
   expiryDate?: string;
 }
 
@@ -29,7 +32,6 @@ export interface SaleResponse {
     product: {
       id: string;
       name: string;
-      unitType: string;
     };
     quantity: number;
     unitPrice: number;
@@ -40,10 +42,12 @@ export interface SaleResponse {
   subtotal: number;
   taxAmount: number;
   discountAmount: number;
+  discountPercentage?: number;
   totalAmount: number;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   status: SaleStatus;
+  saleDate?: string;
   createdAt: string;
   receiptNumber?: string;
 }

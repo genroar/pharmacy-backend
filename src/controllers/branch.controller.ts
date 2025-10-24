@@ -36,9 +36,15 @@ export const getBranches = async (req: AuthRequest, res: Response) => {
       isActive: true
     };
 
+    // Apply company context filtering if available
+    if (req.user?.selectedCompanyId) {
+      where.companyId = req.user.selectedCompanyId;
+      console.log('🏢 Filtering branches by selected company:', req.user.selectedCompanyId);
+    }
+
     // Data isolation based on user role
     if (req.user?.role === 'SUPERADMIN') {
-      // SUPERADMIN can see all branches
+      // SUPERADMIN can see all branches (but still filtered by company if selected)
     } else if (req.user?.role === 'ADMIN') {
       // For ADMIN users, use their own ID as createdBy (self-referencing)
       where.createdBy = req.user.id;

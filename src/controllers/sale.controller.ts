@@ -19,12 +19,15 @@ const createSaleSchema = Joi.object({
       productId: Joi.string().required(),
       quantity: Joi.number().min(1).required(),
       unitPrice: Joi.number().positive().required(),
-      batchNumber: Joi.string().allow(''),
+      batchId: Joi.string().allow(null, ''), // Link to specific batch
+      batchNumber: Joi.string().allow(''), // Keep for backward compatibility
       expiryDate: Joi.string().allow('')
     })
   ).min(1).required(),
   paymentMethod: Joi.string().valid('CASH', 'CARD', 'MOBILE', 'BANK_TRANSFER').required(),
-  discountAmount: Joi.number().min(0).default(0)
+  discountAmount: Joi.number().min(0).default(0),
+  discountPercentage: Joi.number().min(0).max(100).default(0),
+  saleDate: Joi.date().optional()
 });
 
 export const getSales = async (req: AuthRequest, res: Response) => {
@@ -82,8 +85,6 @@ export const getSales = async (req: AuthRequest, res: Response) => {
               id: true,
               name: true,
               phone: true,
-              email: true,
-              address: true,
               totalPurchases: true,
               loyaltyPoints: true,
               isVIP: true,
@@ -109,7 +110,6 @@ export const getSales = async (req: AuthRequest, res: Response) => {
                 select: {
                   id: true,
                   name: true,
-                  unitType: true
                 }
               }
             }
@@ -159,8 +159,6 @@ export const getSale = async (req: Request, res: Response) => {
             id: true,
             name: true,
             phone: true,
-            email: true,
-            address: true
           }
         },
         user: {
@@ -174,7 +172,6 @@ export const getSale = async (req: Request, res: Response) => {
           select: {
             id: true,
             name: true,
-            address: true
           }
         },
         items: {
@@ -183,7 +180,6 @@ export const getSale = async (req: Request, res: Response) => {
               select: {
                 id: true,
                 name: true,
-                unitType: true,
                 barcode: true
               }
             }
@@ -249,8 +245,6 @@ export const getSaleByReceiptNumber = async (req: Request, res: Response) => {
             id: true,
             name: true,
             phone: true,
-            email: true,
-            address: true
           }
         },
         user: {
@@ -264,7 +258,6 @@ export const getSaleByReceiptNumber = async (req: Request, res: Response) => {
           select: {
             id: true,
             name: true,
-            address: true
           }
         },
         items: {
@@ -273,7 +266,6 @@ export const getSaleByReceiptNumber = async (req: Request, res: Response) => {
               select: {
                 id: true,
                 name: true,
-                unitType: true,
                 barcode: true
               }
             }
@@ -378,19 +370,36 @@ export const createSale = async (req: AuthRequest, res: Response) => {
 
     // Calculate totals
     const subtotal = saleData.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
-    const taxAmount = subtotal * (taxRate / 100); // Dynamic tax rate
-    const totalAmount = subtotal + taxAmount - (saleData.discountAmount || 0);
+    const discountAmount = saleData.discountAmount || 0;
+    const subtotalAfterDiscount = subtotal - discountAmount;
+    const taxAmount = subtotalAfterDiscount * (taxRate / 100); // Tax on discounted amount
+    const totalAmount = subtotalAfterDiscount + taxAmount;
 
     // Use transaction to ensure data consistency
     const result = await prisma.$transaction(async (tx) => {
-      // Get companyId from branch
-      const branch = await tx.branch.findUnique({
-        where: { id: saleData.branchId },
-        select: { companyId: true }
-      });
+      // Use selected company/branch context if available, otherwise use the provided branchId
+      let targetCompanyId: string;
+      let targetBranchId: string;
 
-      if (!branch) {
-        throw new Error('Branch not found');
+      if (req.user?.selectedCompanyId && req.user?.selectedBranchId) {
+        // Use selected company/branch context
+        targetCompanyId = req.user.selectedCompanyId;
+        targetBranchId = req.user.selectedBranchId;
+        console.log('🏢 Using selected company/branch context for sale:', { targetCompanyId, targetBranchId });
+      } else {
+        // Fallback to provided branchId
+        const branch = await tx.branch.findUnique({
+          where: { id: saleData.branchId },
+          select: { companyId: true }
+        });
+
+        if (!branch) {
+          throw new Error('Branch not found');
+        }
+
+        targetCompanyId = branch.companyId;
+        targetBranchId = saleData.branchId;
+        console.log('🏢 Using provided branch context for sale:', { targetCompanyId, targetBranchId });
       }
 
       // Create sale
@@ -398,16 +407,18 @@ export const createSale = async (req: AuthRequest, res: Response) => {
         data: {
           customerId: saleData.customerId,
           userId: userId,
-          branchId: saleData.branchId,
-          companyId: branch.companyId,
+          branchId: targetBranchId,
+          companyId: targetCompanyId,
           createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
           subtotal,
           taxAmount,
-          discountAmount: saleData.discountAmount || 0,
+          discountAmount: discountAmount,
+          discountPercentage: saleData.discountPercentage || 0,
           totalAmount,
           paymentMethod: saleData.paymentMethod,
           paymentStatus: 'COMPLETED',
-          status: 'COMPLETED'
+          status: 'COMPLETED',
+          saleDate: saleData.saleDate ? new Date(saleData.saleDate) : undefined
         }
       });
 
@@ -429,8 +440,65 @@ export const createSale = async (req: AuthRequest, res: Response) => {
           throw new Error(`Product with ID ${item.productId} not found`);
         }
 
-        if (product.stock < item.quantity) {
-          throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stock}, Required: ${item.quantity}`);
+        // Check stock availability through batches
+        const availableBatches = await tx.batch.findMany({
+          where: {
+            productId: item.productId,
+            branchId: targetBranchId,
+            quantity: { gt: 0 },
+            isActive: true
+          },
+          orderBy: { expireDate: 'asc' } // FIFO - First In, First Out
+        });
+
+        const totalAvailableStock = availableBatches.reduce((sum, batch) => sum + batch.quantity, 0);
+
+        if (totalAvailableStock < item.quantity) {
+          throw new Error(`Insufficient stock for ${product.name}. Available: ${totalAvailableStock}, Required: ${item.quantity}`);
+        }
+
+        // Handle batch tracking
+        let batchId = null;
+        if (item.batchId) {
+          // Use provided batch ID
+          batchId = item.batchId;
+
+          // Update batch quantity
+          await tx.batch.update({
+            where: { id: item.batchId },
+            data: {
+              quantity: {
+                decrement: item.quantity
+              }
+            }
+          });
+        } else if (item.batchNumber) {
+          // Find batch by batch number and product
+          const batch = await tx.batch.findFirst({
+            where: {
+              batchNo: item.batchNumber,
+              productId: item.productId,
+              branchId: targetBranchId,
+              quantity: {
+                gte: item.quantity
+              }
+            },
+            orderBy: { expireDate: 'asc' } // FIFO - First In, First Out
+          });
+
+          if (batch) {
+            batchId = batch.id;
+
+            // Update batch quantity
+            await tx.batch.update({
+              where: { id: batch.id },
+              data: {
+                quantity: {
+                  decrement: item.quantity
+                }
+              }
+            });
+          }
         }
 
         // Create sale item
@@ -438,26 +506,24 @@ export const createSale = async (req: AuthRequest, res: Response) => {
           data: {
             saleId: sale.id,
             productId: item.productId,
+            batchId: batchId,
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             totalPrice: item.quantity * item.unitPrice,
             batchNumber: item.batchNumber,
-            expiryDate: item.expiryDate ? new Date(item.expiryDate) : null
+            expiryDate: (() => {
+              if (!item.expiryDate || item.expiryDate === 'Invalid Date') return null;
+              const date = new Date(item.expiryDate);
+              return isNaN(date.getTime()) ? null : date;
+            })()
           }
         });
 
         saleItems.push(saleItem);
 
         // Update product stock
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              decrement: item.quantity
-            }
-          }
-        });
+        // Stock is now managed through batches, no need to update product stock directly
 
         // Create stock movement
         await tx.stockMovement.create({
@@ -514,8 +580,6 @@ export const createSale = async (req: AuthRequest, res: Response) => {
             id: true,
             name: true,
             phone: true,
-            email: true,
-            address: true,
             totalPurchases: true,
             loyaltyPoints: true,
             isVIP: true,
@@ -533,7 +597,6 @@ export const createSale = async (req: AuthRequest, res: Response) => {
           select: {
             id: true,
             name: true,
-            address: true
           }
         },
         items: {
@@ -542,7 +605,6 @@ export const createSale = async (req: AuthRequest, res: Response) => {
               select: {
                 id: true,
                 name: true,
-                unitType: true,
                 barcode: true
               }
             }
@@ -583,6 +645,193 @@ export const createSale = async (req: AuthRequest, res: Response) => {
     });
   } catch (error) {
     console.error('Create sale error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Internal server error'
+    });
+  }
+};
+
+export const updateSale = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { discountPercentage, saleDate, notes } = req.body;
+
+    console.log('Update sale request:', { id, discountPercentage, saleDate, notes });
+
+    // Validate input
+    if (discountPercentage !== undefined && (discountPercentage < 0 || discountPercentage > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Discount percentage must be between 0 and 100'
+      });
+    }
+
+    // Get the existing sale
+    const existingSale = await prisma.sale.findUnique({
+      where: { id },
+      include: {
+        items: true,
+        customer: true,
+        user: true,
+        branch: true,
+        company: true
+      }
+    });
+
+    if (!existingSale) {
+      return res.status(404).json({
+        success: false,
+        message: 'Sale not found'
+      });
+    }
+
+    // Check if user has permission to update this sale
+    const canUpdate = req.user?.role === 'SUPERADMIN' ||
+                     req.user?.role === 'ADMIN' ||
+                     (req.user?.role === 'MANAGER' && existingSale.userId === req.user?.id) ||
+                     (req.user?.role === 'CASHIER' && existingSale.userId === req.user?.id);
+
+    if (!canUpdate) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this sale'
+      });
+    }
+
+    // Calculate new totals if discount percentage changed
+    let newDiscountAmount = existingSale.discountAmount;
+    let newTaxAmount = existingSale.taxAmount;
+    let newTotalAmount = existingSale.totalAmount;
+
+    if (discountPercentage !== undefined && discountPercentage !== existingSale.discountPercentage) {
+      newDiscountAmount = (existingSale.subtotal * discountPercentage) / 100;
+      const subtotalAfterDiscount = existingSale.subtotal - newDiscountAmount;
+      newTaxAmount = subtotalAfterDiscount * 0.17; // 17% tax
+      newTotalAmount = subtotalAfterDiscount + newTaxAmount;
+    }
+
+    // Update the sale
+    const updatedSale = await prisma.sale.update({
+      where: { id },
+      data: {
+        discountPercentage: discountPercentage !== undefined ? discountPercentage : existingSale.discountPercentage,
+        discountAmount: newDiscountAmount,
+        taxAmount: newTaxAmount,
+        totalAmount: newTotalAmount,
+        saleDate: saleDate ? new Date(saleDate) : existingSale.saleDate,
+        updatedAt: new Date()
+      },
+      include: {
+        items: {
+          include: {
+            product: true
+          }
+        },
+        customer: true,
+        user: true,
+        branch: true,
+        company: true,
+        receipts: true
+      }
+    });
+
+    // Convert BigInt values to strings for JSON serialization
+    const serializedSale = {
+      ...updatedSale,
+      id: updatedSale.id.toString(),
+      userId: updatedSale.userId.toString(),
+      branchId: updatedSale.branchId.toString(),
+      companyId: updatedSale.companyId.toString(),
+      customerId: updatedSale.customerId?.toString() || null,
+      subtotal: Number(updatedSale.subtotal),
+      taxAmount: Number(updatedSale.taxAmount),
+      discountAmount: Number(updatedSale.discountAmount),
+      discountPercentage: updatedSale.discountPercentage ? Number(updatedSale.discountPercentage) : null,
+      totalAmount: Number(updatedSale.totalAmount),
+      createdAt: updatedSale.createdAt.toISOString(),
+      updatedAt: updatedSale.updatedAt.toISOString(),
+      saleDate: updatedSale.saleDate?.toISOString() || null,
+      items: updatedSale.items.map(item => ({
+        ...item,
+        id: item.id.toString(),
+        saleId: item.saleId.toString(),
+        productId: item.productId.toString(),
+        batchId: item.batchId?.toString() || null,
+        createdBy: item.createdBy?.toString() || null,
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.unitPrice),
+        totalPrice: Number(item.totalPrice),
+        product: {
+          ...item.product,
+          id: item.product.id.toString(),
+          branchId: item.product.branchId.toString(),
+          companyId: item.product.companyId.toString(),
+          categoryId: item.product.categoryId?.toString() || null,
+          createdBy: item.product.createdBy?.toString() || null,
+          // costPrice, sellingPrice, and stock are now managed through batches
+          minStock: Number(item.product.minStock),
+          maxStock: Number(item.product.maxStock),
+          createdAt: item.product.createdAt.toISOString(),
+          updatedAt: item.product.updatedAt.toISOString()
+        }
+      })),
+      customer: updatedSale.customer ? {
+        ...updatedSale.customer,
+        id: updatedSale.customer.id.toString(),
+        branchId: updatedSale.customer.branchId.toString(),
+        companyId: updatedSale.customer.companyId.toString(),
+        createdBy: updatedSale.customer.createdBy?.toString() || null,
+        totalPurchases: Number(updatedSale.customer.totalPurchases),
+        loyaltyPoints: Number(updatedSale.customer.loyaltyPoints),
+        createdAt: updatedSale.customer.createdAt.toISOString(),
+        updatedAt: updatedSale.customer.updatedAt.toISOString()
+      } : null,
+      user: {
+        ...updatedSale.user,
+        id: updatedSale.user.id.toString(),
+        branchId: updatedSale.user.branchId?.toString() || null,
+        companyId: updatedSale.user.companyId?.toString() || null,
+        createdBy: updatedSale.user.createdBy?.toString() || null,
+        createdAt: updatedSale.user.createdAt.toISOString(),
+        updatedAt: updatedSale.user.updatedAt.toISOString()
+      },
+      branch: {
+        ...updatedSale.branch,
+        id: updatedSale.branch.id.toString(),
+        companyId: updatedSale.branch.companyId.toString(),
+        createdBy: updatedSale.branch.createdBy?.toString() || null,
+        createdAt: updatedSale.branch.createdAt.toISOString(),
+        updatedAt: updatedSale.branch.updatedAt.toISOString()
+      },
+      company: {
+        ...updatedSale.company,
+        id: updatedSale.company.id.toString(),
+        createdBy: updatedSale.company.createdBy?.toString() || null,
+        createdAt: updatedSale.company.createdAt.toISOString(),
+        updatedAt: updatedSale.company.updatedAt.toISOString()
+      },
+      receipts: updatedSale.receipts.map(receipt => ({
+        ...receipt,
+        id: receipt.id.toString(),
+        saleId: receipt.saleId.toString(),
+        printedAt: receipt.printedAt?.toISOString() || null
+      }))
+    };
+
+    // Notify about the update
+    const createdBy = req.user?.createdBy || req.user?.id;
+    if (createdBy) {
+      notifySaleChange(createdBy, 'updated', serializedSale);
+    }
+
+    return res.json({
+      success: true,
+      data: serializedSale
+    });
+
+  } catch (error) {
+    console.error('Update sale error:', error);
     return res.status(500).json({
       success: false,
       message: error instanceof Error ? error.message : 'Internal server error'

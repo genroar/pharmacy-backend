@@ -45,10 +45,36 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 
     const where: any = {};
 
+    // Debug: Log user context
+    console.log('🔍 getUsers - User context:', {
+      userId: req.user?.id,
+      role: req.user?.role,
+      selectedCompanyId: req.user?.selectedCompanyId,
+      selectedBranchId: req.user?.selectedBranchId,
+      createdBy: req.user?.createdBy
+    });
+
+    // Apply company context filtering if available
+    if (req.user?.selectedCompanyId) {
+      // Filter users by company through their branch relationship
+      where.branch = {
+        companyId: req.user.selectedCompanyId
+      };
+      console.log('🏢 Filtering users by selected company through branch:', req.user.selectedCompanyId);
+    } else {
+      console.log('⚠️ No selectedCompanyId found in user context');
+    }
+
     // Data isolation: Only show users belonging to the same admin
+    // BUT: If a company is selected, show ALL users from that company regardless of who created them
     if (req.user?.role === 'SUPERADMIN') {
-      // SuperAdmin can see all users
+      // SuperAdmin can see all users (but still filtered by company if selected)
+    } else if (req.user?.selectedCompanyId) {
+      // When a company is selected, show all users from that company
+      // Don't apply createdBy filter - show all users in the selected company
+      console.log('🏢 Company selected - showing all users from selected company, ignoring createdBy filter');
     } else if (req.user?.createdBy) {
+      // Only apply createdBy filter when no company is selected
       where.createdBy = req.user.createdBy;
     } else {
       // If no createdBy, show only users created by this user
@@ -74,6 +100,9 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
         { email: { contains: search, mode: 'insensitive' } }
       ];
     }
+
+    // Debug: Log final where clause
+    console.log('🔍 getUsers - Final where clause:', JSON.stringify(where, null, 2));
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
@@ -144,7 +173,6 @@ export const getUser = async (req: AuthRequest, res: Response) => {
           select: {
             id: true,
             name: true,
-            address: true
           }
         }
       }

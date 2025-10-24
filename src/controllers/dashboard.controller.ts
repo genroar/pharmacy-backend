@@ -62,16 +62,33 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    // Get low stock products count
-    const lowStockProducts = await prisma.product.count({
+    // Get low stock products count (calculated from batches)
+    const allProducts = await prisma.product.findMany({
       where: {
         ...where,
-        isActive: true,
-        stock: {
-          lte: prisma.product.fields.minStock
+        isActive: true
+      },
+      include: {
+        batches: {
+          where: {
+            isActive: true,
+            quantity: { gt: 0 },
+            OR: [
+              { expireDate: null },
+              { expireDate: { gt: new Date() } }
+            ]
+          },
+          select: {
+            quantity: true
+          }
         }
       }
     });
+
+    const lowStockProducts = allProducts.filter(product => {
+      const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      return totalStock <= product.minStock;
+    }).length;
 
     // Get total customers count
     const totalCustomers = await prisma.customer.count({
@@ -348,17 +365,18 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
     // Get low stock products across all branches
     const lowStockProducts = await prisma.product.findMany({
       where: {
-        isActive: true,
-        stock: {
-          lte: prisma.product.fields.minStock
-        }
+        isActive: true
       },
-      select: {
-        id: true,
-        name: true,
-        stock: true,
-        minStock: true,
-        unitType: true,
+      include: {
+        batches: {
+          where: {
+            isActive: true,
+            quantity: { gt: 0 }
+          },
+          select: {
+            quantity: true
+          }
+        },
         branch: {
           select: {
             name: true
@@ -367,6 +385,18 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
       },
       take: 10
     });
+
+    // Filter products with low stock based on batch quantities
+    const filteredLowStockProducts = lowStockProducts.filter(product => {
+      const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      return totalStock <= product.minStock;
+    }).map(product => ({
+      id: product.id,
+      name: product.name,
+      stock: product.batches.reduce((sum, batch) => sum + batch.quantity, 0),
+      minStock: product.minStock,
+      branch: product.branch
+    }));
 
     // Get branch performance
     const branchPerformance = await prisma.branch.findMany({
@@ -435,7 +465,7 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
         totalUsers,
         totalBranches,
         recentSales,
-        lowStockProducts,
+        lowStockProducts: filteredLowStockProducts,
         branchPerformance: branchStats,
         recentUsers: recentUsers.map(user => ({
           id: user.id,
@@ -494,11 +524,17 @@ export const getTopSellingProducts = async (req: Request, res: Response) => {
           in: productIds
         }
       },
-      select: {
-        id: true,
-        name: true,
-        sellingPrice: true,
-        unitType: true,
+      include: {
+        batches: {
+          where: {
+            isActive: true,
+            quantity: { gt: 0 }
+          },
+          select: {
+            sellingPrice: true
+          },
+          take: 1
+        },
         category: {
           select: {
             name: true
@@ -515,7 +551,7 @@ export const getTopSellingProducts = async (req: Request, res: Response) => {
         productId: item.productId,
         product: product ? {
           ...product,
-          price: product.sellingPrice
+          price: product.batches[0]?.sellingPrice || 0
         } : null,
         totalQuantity: item._sum.quantity || 0,
         totalRevenue: item._sum.totalPrice || 0,

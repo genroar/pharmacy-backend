@@ -154,7 +154,6 @@ export const getCustomer = async (req: Request, res: Response) => {
                   select: {
                     id: true,
                     name: true,
-                    unitType: true
                   }
                 }
               }
@@ -405,8 +404,7 @@ export const getCustomerPurchaseHistory = async (req: Request, res: Response) =>
               product: {
                 select: {
                   id: true,
-                  name: true,
-                  unitType: true
+                  name: true
                 }
               }
             }

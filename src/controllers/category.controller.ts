@@ -8,12 +8,16 @@ const prisma = new PrismaClient();
 // Validation schemas
 const createCategorySchema = Joi.object({
   name: Joi.string().required(),
-  description: Joi.string().allow('')
+  description: Joi.string().allow(''),
+  type: Joi.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL').default('GENERAL'),
+  color: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6')
 });
 
 const updateCategorySchema = Joi.object({
   name: Joi.string(),
-  description: Joi.string().allow('')
+  description: Joi.string().allow(''),
+  type: Joi.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL'),
+  color: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/)
 });
 
 export const getCategories = async (req: AuthRequest, res: Response) => {
@@ -40,6 +44,28 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
     } else {
       // No access if no user context
       where.createdBy = 'non-existent-admin-id';
+    }
+
+    // For product creation, we want to show all categories belonging to the user/admin
+    // regardless of whether they have products in the current branch
+    // Branch filtering is only applied when specifically requested for inventory management
+    if (branchId && req.query.filterByProducts === 'true') {
+      // Only filter by products if explicitly requested (for inventory management)
+      const categoriesWithProductsInBranch = await prisma.product.findMany({
+        where: {
+          branchId: String(branchId),
+          createdBy: where.createdBy
+        },
+        select: {
+          categoryId: true
+        },
+        distinct: ['categoryId']
+      });
+
+      const categoryIds = categoriesWithProductsInBranch.map(p => p.categoryId);
+      where.id = {
+        in: categoryIds
+      };
     }
 
     if (search) {
@@ -160,7 +186,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { name, description } = req.body;
+    const { name, description, type, color } = req.body;
 
     // Check if category with this name already exists for this admin
     const existingCategory = await prisma.category.findFirst({
@@ -181,6 +207,8 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
     console.log('Creating category with data:', {
       name,
       description,
+      type,
+      color,
       createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
     });
 
@@ -188,6 +216,8 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       data: {
         name,
         description: description || null,
+        type: type || 'GENERAL',
+        color: color || '#3B82F6',
         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
       }
     });

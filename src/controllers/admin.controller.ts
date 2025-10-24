@@ -56,9 +56,7 @@ export const getAdmins = async (req: Request, res: Response) => {
             select: {
               id: true,
               name: true,
-              address: true,
               phone: true,
-              email: true
             }
           },
           _count: {
@@ -155,9 +153,7 @@ export const getAdmin = async (req: Request, res: Response): Promise<void> => {
           select: {
             id: true,
             name: true,
-            address: true,
             phone: true,
-            email: true
           }
         }
       }
@@ -200,7 +196,6 @@ export const getAdmin = async (req: Request, res: Response): Promise<void> => {
       email: admin.email,
       phone: admin.branch?.phone || '',
       company: admin.branch?.name || '',
-      address: admin.branch?.address || '',
       userCount,
       managerCount,
       totalSales: salesStats._sum.totalAmount || 0,
@@ -318,9 +313,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
             select: {
               id: true,
               name: true,
-              address: true,
               phone: true,
-              email: true
             }
           }
         }
@@ -335,9 +328,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
             select: {
               id: true,
               name: true,
-              address: true,
               phone: true,
-              email: true
             }
           }
         }
@@ -354,7 +345,6 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
       email: admin.email,
       phone: admin.branch?.phone || '',
       company: admin.branch?.name || '',
-      address: admin.branch?.address || '',
       userCount: 0,
       managerCount: 0,
       totalSales: 0,
@@ -418,9 +408,7 @@ export const updateAdmin = async (req: Request, res: Response): Promise<void> =>
           select: {
             id: true,
             name: true,
-            address: true,
             phone: true,
-            email: true
           }
         }
       }
@@ -433,7 +421,6 @@ export const updateAdmin = async (req: Request, res: Response): Promise<void> =>
         data: {
           name: updateData.company,
           phone: updateData.phone || admin.branch?.phone,
-          email: updateData.email || admin.branch?.email
         }
       });
     }
@@ -654,7 +641,6 @@ export const getAdminUsers = async (req: Request, res: Response): Promise<void> 
       select: {
         id: true,
         name: true,
-        email: true,
         isActive: true,
         role: true,
         createdAt: true,
@@ -666,7 +652,6 @@ export const getAdminUsers = async (req: Request, res: Response): Promise<void> 
     const usersWithStats = users.map(user => ({
       id: user.id,
       name: user.name,
-      email: user.email,
       createdBy: createdBy,
       lastActive: user.updatedAt.toISOString().split('T')[0],
       status: user.isActive ? 'active' : 'inactive',

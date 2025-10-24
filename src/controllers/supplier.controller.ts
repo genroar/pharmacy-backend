@@ -10,22 +10,20 @@ const createSupplierSchema = Joi.object({
   name: Joi.string().required(),
   contactPerson: Joi.string().required(),
   phone: Joi.string().required(),
-  email: Joi.string().email().required(),
-  address: Joi.string().required()
+  manufacturerId: Joi.string().allow('').optional()
 });
 
 const updateSupplierSchema = Joi.object({
   name: Joi.string(),
   contactPerson: Joi.string(),
   phone: Joi.string(),
-  email: Joi.string().email(),
-  address: Joi.string(),
+  manufacturerId: Joi.string().allow('').optional(),
   isActive: Joi.boolean()
 });
 
 export const getSuppliers = async (req: AuthRequest, res: Response) => {
   try {
-    const { page = 1, limit = 50, search = '', active = true } = req.query;
+    const { page = 1, limit = 50, search = '', active = true, branchId = '' } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
@@ -53,6 +51,15 @@ export const getSuppliers = async (req: AuthRequest, res: Response) => {
       where.isActive = true;
     }
 
+    // Filter suppliers by branch if branchId is provided
+    if (branchId) {
+      where.products = {
+        some: {
+          branchId: branchId
+        }
+      };
+    }
+
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -69,6 +76,13 @@ export const getSuppliers = async (req: AuthRequest, res: Response) => {
         skip,
         take,
         include: {
+          manufacturer: {
+            select: {
+              id: true,
+              name: true,
+              country: true
+            }
+          },
           _count: {
             select: {
               products: true
@@ -128,6 +142,13 @@ export const getSupplier = async (req: AuthRequest, res: Response) => {
     const supplier = await prisma.supplier.findFirst({
       where,
       include: {
+        manufacturer: {
+          select: {
+            id: true,
+            name: true,
+            country: true
+          }
+        },
         _count: {
           select: {
             products: true
@@ -158,8 +179,10 @@ export const getSupplier = async (req: AuthRequest, res: Response) => {
 
 export const createSupplier = async (req: AuthRequest, res: Response) => {
   try {
+    console.log('🔍 Create supplier request body:', req.body);
     const { error } = createSupplierSchema.validate(req.body);
     if (error) {
+      console.log('🔍 Validation error:', error.details);
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -167,7 +190,7 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { name, contactPerson, phone, email, address } = req.body;
+    const { name, contactPerson, phone, email, address, manufacturerId } = req.body;
 
     // Note: Suppliers are shared across all branches under the same admin
     // No need to check for duplicates as suppliers can have the same name across different contexts
@@ -177,8 +200,7 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
         name,
         contactPerson,
         phone,
-        email,
-        address,
+        manufacturerId: manufacturerId && manufacturerId.trim() !== '' ? manufacturerId : null,
         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
       }
     });
@@ -199,9 +221,11 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
 export const updateSupplier = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    console.log('🔍 Update supplier request body:', req.body);
     const { error } = updateSupplierSchema.validate(req.body);
 
     if (error) {
+      console.log('🔍 Update validation error:', error.details);
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -209,11 +233,36 @@ export const updateSupplier = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const updateData = req.body;
+    const updateData = { ...req.body };
+
+    // Handle empty manufacturerId
+    if (updateData.manufacturerId && updateData.manufacturerId.trim() === '') {
+      updateData.manufacturerId = null;
+    }
+
+    // Build where clause with data isolation
+    const where: any = { id };
+
+    // Data isolation based on user role
+    if (req.user?.role === 'SUPERADMIN') {
+      // SUPERADMIN can see all suppliers
+    } else if (req.user?.role === 'ADMIN') {
+      // For ADMIN users, use their own ID as createdBy (self-referencing)
+      where.createdBy = req.user.id;
+    } else if (req.user?.createdBy) {
+      // Other users see suppliers from their admin
+      where.createdBy = req.user.createdBy;
+    } else if (req.user?.id) {
+      // Fallback to user ID if no createdBy
+      where.createdBy = req.user.id;
+    } else {
+      // No access if no user context
+      where.createdBy = 'non-existent-admin-id';
+    }
 
     // Check if supplier exists
-    const existingSupplier = await prisma.supplier.findUnique({
-      where: { id }
+    const existingSupplier = await prisma.supplier.findFirst({
+      where
     });
 
     if (!existingSupplier) {
@@ -244,12 +293,33 @@ export const updateSupplier = async (req: AuthRequest, res: Response) => {
   }
 };
 
-export const deleteSupplier = async (req: Request, res: Response) => {
+export const deleteSupplier = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
+    console.log('🔍 Delete supplier ID:', id);
 
-    const supplier = await prisma.supplier.findUnique({
-      where: { id },
+    // Build where clause with data isolation
+    const where: any = { id };
+
+    // Data isolation based on user role
+    if (req.user?.role === 'SUPERADMIN') {
+      // SUPERADMIN can see all suppliers
+    } else if (req.user?.role === 'ADMIN') {
+      // For ADMIN users, use their own ID as createdBy (self-referencing)
+      where.createdBy = req.user.id;
+    } else if (req.user?.createdBy) {
+      // Other users see suppliers from their admin
+      where.createdBy = req.user.createdBy;
+    } else if (req.user?.id) {
+      // Fallback to user ID if no createdBy
+      where.createdBy = req.user.id;
+    } else {
+      // No access if no user context
+      where.createdBy = 'non-existent-admin-id';
+    }
+
+    const supplier = await prisma.supplier.findFirst({
+      where,
       include: {
         _count: {
           select: {

@@ -185,9 +185,22 @@ export const notifyProductChange = (createdBy: string, action: 'created' | 'upda
 };
 
 export const notifySaleChange = (createdBy: string, action: 'created' | 'updated' | 'deleted', sale: any) => {
+  // Create a simplified sale object for notifications to avoid BigInt serialization issues
+  const notificationSale = {
+    id: sale.id?.toString(),
+    totalAmount: typeof sale.totalAmount === 'bigint' ? Number(sale.totalAmount) : sale.totalAmount,
+    discountPercentage: sale.discountPercentage,
+    discountAmount: typeof sale.discountAmount === 'bigint' ? Number(sale.discountAmount) : sale.discountAmount,
+    paymentMethod: sale.paymentMethod,
+    status: sale.status,
+    customerName: sale.customer?.name || 'Walk-in Customer',
+    createdAt: sale.createdAt?.toISOString?.() || sale.createdAt,
+    updatedAt: sale.updatedAt?.toISOString?.() || sale.updatedAt
+  };
+
   notifyAdminGroup(createdBy, 'sale_change', {
     action,
-    sale,
+    sale: notificationSale,
     message: `Sale ${action}: ${sale.id}`
   });
 };

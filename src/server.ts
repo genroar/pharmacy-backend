@@ -20,6 +20,8 @@ import dashboardRoutes from './routes/dashboard.routes';
 import adminRoutes from './routes/admin.routes';
 import categoryRoutes from './routes/category.routes';
 import supplierRoutes from './routes/supplier.routes';
+import manufacturerRoutes from './routes/manufacturer.routes';
+import shelfRoutes from './routes/shelf.routes';
 import employeeRoutes from './routes/employee.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import shiftRoutes from './routes/shift.routes';
@@ -28,6 +30,9 @@ import commissionRoutes from './routes/commission.routes';
 import roleRoutes from './routes/role.routes';
 import refundRoutes from './routes/refund.routes';
 import subscriptionRoutes from './routes/subscription.routes';
+import batchRoutes from './routes/batch.routes';
+import purchaseRoutes from './routes/purchase.routes';
+import inventoryRoutes from './routes/inventory.routes';
 import sseRoutes from './routes/sse.routes';
 import settingsRoutes from './routes/settings.routes';
 
@@ -108,7 +113,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Company-ID', 'X-Branch-ID'],
   optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
 };
 
@@ -193,6 +198,8 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/manufacturers', manufacturerRoutes);
+app.use('/api/shelves', shelfRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/shifts', shiftRoutes);
@@ -201,6 +208,9 @@ app.use('/api/commissions', commissionRoutes);
 app.use('/api/roles', roleRoutes);
 app.use('/api/refunds', refundRoutes);
 app.use('/api/subscription', subscriptionRoutes);
+app.use('/api/batches', batchRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/inventory', inventoryRoutes);
 app.use('/api/sse', sseRoutes);
 app.use('/api/settings', settingsRoutes);
 

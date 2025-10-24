@@ -42,40 +42,34 @@ function serializeBigInt(obj: any): any {
 const createProductSchema = Joi.object({
   name: Joi.string().required(),
   description: Joi.string().allow(''),
+  formula: Joi.string().allow(''), // New field for product composition
   sku: Joi.string().allow(''),
   categoryId: Joi.string().required(),
   categoryName: Joi.string().allow(''), // For bulk import - category name when categoryId doesn't exist
   supplierId: Joi.string().required(),
   branchId: Joi.string().required(),
-  costPrice: Joi.number().positive().required(),
-  sellingPrice: Joi.number().positive().required(),
-  stock: Joi.number().min(0).required(),
-  minStock: Joi.number().min(0).required(),
-  maxStock: Joi.number().min(0).allow(null),
-  unitType: Joi.string().required(),
-  unitsPerPack: Joi.number().min(1).default(1),
   barcode: Joi.string().allow(''),
   requiresPrescription: Joi.boolean().default(false),
-  isActive: Joi.boolean().default(true)
+  isActive: Joi.boolean().default(true),
+  minStock: Joi.number().min(0).default(1).optional(),
+  maxStock: Joi.number().min(0).allow(null).optional(),
+  unitsPerPack: Joi.number().min(1).default(1).optional()
 });
 
 const updateProductSchema = Joi.object({
   name: Joi.string().allow(''),
   description: Joi.string().allow(''),
+  formula: Joi.string().allow(''), // New field for product composition
   sku: Joi.string().allow(''),
   categoryId: Joi.string().allow(''),
   supplierId: Joi.string().allow(''),
   branchId: Joi.string().allow(''),
-  costPrice: Joi.number().positive().allow(0),
-  sellingPrice: Joi.number().positive().allow(0),
-  stock: Joi.number().min(0),
-  minStock: Joi.number().min(0),
-  maxStock: Joi.number().min(0).allow(null),
-  unitType: Joi.string().allow(''),
-  unitsPerPack: Joi.number().min(1).default(1),
   barcode: Joi.string().allow(''),
   requiresPrescription: Joi.boolean(),
-  isActive: Joi.boolean()
+  isActive: Joi.boolean(),
+  minStock: Joi.number().min(0).optional(),
+  maxStock: Joi.number().min(0).allow(null).optional(),
+  unitsPerPack: Joi.number().min(1).default(1).optional()
 });
 
 export const getProducts = async (req: AuthRequest, res: Response) => {
@@ -85,6 +79,7 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
       limit = 10,
       search = '',
       category = '',
+      categoryType = '',
       branchId = '',
       lowStock = false,
       includeInactive = false
@@ -109,6 +104,12 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
       where.categoryId = category;
     }
 
+    if (categoryType) {
+      where.category = {
+        type: String(categoryType).toUpperCase()
+      };
+    }
+
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -117,9 +118,7 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
       ];
     }
 
-    if (lowStock === 'true') {
-      where.stock = { lte: prisma.product.fields.minStock };
-    }
+    // Note: lowStock filtering will be handled after fetching products with batch data
 
     const [products, total] = await Promise.all([
       prisma.product.findMany({
@@ -134,6 +133,24 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
               id: true,
               name: true
             }
+          },
+          batches: {
+            where: {
+              isActive: true,
+              quantity: { gt: 0 },
+              OR: [
+                { expireDate: null },
+                { expireDate: { gt: new Date() } }
+              ]
+            },
+            select: {
+              id: true,
+              batchNo: true,
+              quantity: true,
+              sellingPrice: true,
+              expireDate: true
+            },
+            orderBy: { expireDate: 'asc' }
           }
         },
         orderBy: { createdAt: 'desc' }
@@ -141,15 +158,37 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
       prisma.product.count({ where })
     ]);
 
+    // Calculate total stock and get current selling price from batches
+    const productsWithBatchData = products.map(product => {
+      const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      const currentBatch = product.batches.find(batch => batch.quantity > 0) || product.batches[0];
+      const currentPrice = currentBatch?.sellingPrice || 0;
+
+      return {
+        ...product,
+        stock: totalStock,
+        price: currentPrice,
+        currentBatch: currentBatch
+      };
+    });
+
+    // Apply low stock filter if requested
+    let filteredProducts = productsWithBatchData;
+    if (lowStock === 'true') {
+      filteredProducts = productsWithBatchData.filter(product =>
+        product.stock <= product.minStock
+      );
+    }
+
     return res.json({
       success: true,
       data: {
-        products: serializeBigInt(products),
+        products: serializeBigInt(filteredProducts),
         pagination: {
           page: Number(page),
           limit: Number(limit),
-          total,
-          pages: Math.ceil(total / Number(limit))
+          total: lowStock === 'true' ? filteredProducts.length : total,
+          pages: Math.ceil((lowStock === 'true' ? filteredProducts.length : total) / Number(limit))
         }
       }
     });
@@ -246,8 +285,6 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
             name: 'Default Supplier',
             contactPerson: 'System Generated',
             phone: '+92 300 0000000',
-            email: process.env.SYSTEM_EMAIL || 'system@default.com',
-            address: 'Auto-created for imports',
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
             isActive: true
           }
@@ -273,38 +310,51 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Get the branch to find the companyId
-    const branch = await prisma.branch.findUnique({
-      where: { id: productData.branchId },
-      select: { companyId: true }
-    });
+    // Use selected company/branch context if available, otherwise use the provided branchId
+    let targetCompanyId: string;
+    let targetBranchId: string;
 
-    if (!branch) {
-      return res.status(400).json({
-        success: false,
-        message: 'Branch not found'
+    if (req.user?.selectedCompanyId && req.user?.selectedBranchId) {
+      // Use selected company/branch context
+      targetCompanyId = req.user.selectedCompanyId;
+      targetBranchId = req.user.selectedBranchId;
+      console.log('🏢 Using selected company/branch context:', { targetCompanyId, targetBranchId });
+    } else {
+      // Fallback to provided branchId
+      const branch = await prisma.branch.findUnique({
+        where: { id: productData.branchId },
+        select: { companyId: true }
       });
+
+      if (!branch) {
+        return res.status(400).json({
+          success: false,
+          message: 'Branch not found'
+        });
+      }
+
+      targetCompanyId = branch.companyId;
+      targetBranchId = productData.branchId;
+      console.log('🏢 Using provided branch context:', { targetCompanyId, targetBranchId });
     }
 
     const product = await prisma.product.create({
       data: {
         name: productData.name,
         description: productData.description,
+        formula: productData.formula, // New field for product composition
         sku: productData.sku,
         categoryId: productData.categoryId,
         supplierId: productData.supplierId,
-        branchId: productData.branchId,
-        companyId: branch.companyId,
+        branchId: targetBranchId,
+        companyId: targetCompanyId,
         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id', // Use createdBy for data isolation
-        costPrice: productData.costPrice,
-        sellingPrice: productData.sellingPrice,
-        stock: productData.stock,
-        minStock: productData.minStock,
-        maxStock: productData.maxStock,
-        unitType: productData.unitType,
-        unitsPerPack: productData.unitsPerPack,
         barcode: productData.barcode,
-        requiresPrescription: productData.requiresPrescription
+        requiresPrescription: productData.requiresPrescription,
+        // Price and stock are now managed through batches
+        minStock: productData.minStock || 1,
+        maxStock: productData.maxStock || 1000,
+        unitsPerPack: productData.unitsPerPack || 1
       },
       include: {
         category: true,
@@ -318,16 +368,7 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    // Create initial stock movement
-    await prisma.stockMovement.create({
-      data: {
-        productId: product.id,
-        type: 'IN',
-        quantity: productData.stock,
-        reason: 'Initial stock',
-        createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-      }
-    });
+    // Stock is now managed through batches, not directly on products
 
     // Send real-time notification to all users of the same admin
     const createdBy = req.user?.createdBy || req.user?.id;
@@ -402,12 +443,9 @@ export const updateProduct = async (req: AuthRequest, res: Response) => {
         categoryId: updateData.categoryId,
         supplierId: updateData.supplierId,
         branchId: updateData.branchId,
-        costPrice: updateData.costPrice,
-        sellingPrice: updateData.sellingPrice,
-        stock: updateData.stock,
+        // Price and stock are now managed through batches
         minStock: updateData.minStock,
         maxStock: updateData.maxStock,
-        unitType: updateData.unitType,
         unitsPerPack: updateData.unitsPerPack,
         barcode: updateData.barcode,
         requiresPrescription: updateData.requiresPrescription,
@@ -531,65 +569,11 @@ export const updateStock = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Calculate new stock
-    let newStock = product.stock;
-    if (type === 'IN') {
-      newStock += quantity;
-    } else if (type === 'OUT') {
-      newStock -= quantity;
-      if (newStock < 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Insufficient stock'
-        });
-      }
-    } else if (type === 'ADJUSTMENT') {
-      newStock = quantity;
-    }
-
-    // Update product stock
-    const updatedProduct = await prisma.product.update({
-      where: { id },
-      data: { stock: newStock },
-      include: {
-        category: true,
-        supplier: true,
-        branch: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      }
-    });
-
-    // Create stock movement record
-    await prisma.stockMovement.create({
-      data: {
-        productId: id,
-        type,
-        quantity,
-        reason,
-        reference,
-        createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-      }
-    });
-
-    // Send real-time notification to all users of the same admin
-    const createdBy = req.user?.createdBy || req.user?.id;
-    if (createdBy) {
-      notifyInventoryChange(createdBy, 'stock_updated', {
-        productId: updatedProduct.id,
-        productName: updatedProduct.name,
-        newStock: updatedProduct.stock,
-        changeType: type,
-        quantity: quantity
-      });
-    }
-
-    return res.json({
-      success: true,
-      data: serializeBigInt(updatedProduct)
+    // Stock adjustments are now managed through batches
+    // This function is deprecated - use batch management instead
+    return res.status(400).json({
+      success: false,
+      message: 'Stock adjustments are now managed through batches. Please use batch management instead.'
     });
   } catch (error) {
     console.error('Update stock error:', error);
@@ -645,17 +629,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           productData.name = `Product_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
         }
 
-        if (!productData.sellingPrice || productData.sellingPrice <= 0) {
-          productData.sellingPrice = 100; // Default price
-        }
-
-        if (productData.stock === undefined || productData.stock === null || productData.stock < 0) {
-          productData.stock = 0; // Default stock
-        }
-
-        if (!productData.costPrice || productData.costPrice <= 0) {
-          productData.costPrice = productData.sellingPrice * 0.7; // 70% of selling price
-        }
+        // Price and stock are now managed through batches
 
         if (!productData.minStock || productData.minStock < 0) {
           productData.minStock = 10; // Default minimum stock
@@ -665,9 +639,6 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           productData.maxStock = null; // No maximum limit
         }
 
-        if (!productData.unitType || productData.unitType.trim() === '') {
-          productData.unitType = 'tablets'; // Default unit
-        }
 
         if (!productData.unitsPerPack || productData.unitsPerPack <= 0) {
           productData.unitsPerPack = 1; // Default pack size
@@ -734,8 +705,6 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
                 name: 'Default Supplier',
                 contactPerson: 'System Generated',
                 phone: '+92 300 0000000',
-                email: process.env.SYSTEM_EMAIL || 'system@default.com',
-                address: 'Auto-created for imports',
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                 isActive: true
               }
@@ -817,11 +786,8 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
             const updatedProduct = await prisma.product.update({
               where: { id: existingProduct.id },
               data: {
-                stock: existingProduct.stock + productData.stock, // Add to existing stock
-                costPrice: productData.costPrice, // Update cost price
-                sellingPrice: productData.sellingPrice, // Update selling price
+                // Price and stock are now managed through batches
                 description: productData.description || existingProduct.description,
-                unitType: productData.unitType || existingProduct.unitType,
                 unitsPerPack: productData.unitsPerPack || existingProduct.unitsPerPack,
                 // Don't update barcode for existing products to avoid conflicts
                 requiresPrescription: productData.requiresPrescription !== undefined ? productData.requiresPrescription : existingProduct.requiresPrescription
@@ -838,17 +804,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
               }
             });
 
-            // Create stock movement record for the addition
-            await prisma.stockMovement.create({
-              data: {
-                productId: existingProduct.id,
-                type: 'IN',
-                quantity: productData.stock,
-                reason: 'Bulk Import - Stock Update',
-                reference: 'BULK_IMPORT_UPDATE',
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-              }
-            });
+            // Stock movements are now managed through batches
 
             results.successful.push(updatedProduct);
             console.log(`Updated existing product: ${productData.name}`);
@@ -884,8 +840,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           categoryId: productData.categoryId,
           supplierId: productData.supplierId,
           branchId: productData.branchId,
-          sellingPrice: productData.sellingPrice,
-          stock: productData.stock
+          // Price and stock are now managed through batches
         });
         console.log(`BranchId for product ${productData.name}:`, productData.branchId);
         console.log(`BranchId type:`, typeof productData.branchId);
@@ -941,12 +896,9 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
             branchId: productData.branchId,
             companyId: branchForCompany.companyId,
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-            costPrice: productData.costPrice || 0,
-            sellingPrice: productData.sellingPrice,
-            stock: productData.stock,
+            // Price and stock are now managed through batches
             minStock: productData.minStock || 10,
             maxStock: productData.maxStock || null,
-            unitType: productData.unitType || 'tablets',
             unitsPerPack: productData.unitsPerPack || 1,
             barcode: finalBarcode || null,
             requiresPrescription: productData.requiresPrescription || false,
@@ -967,17 +919,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
 
         results.successful.push(product);
 
-        // Create stock movement record
-        await prisma.stockMovement.create({
-          data: {
-            productId: product.id,
-            type: 'IN',
-            quantity: productData.stock,
-            reason: 'Bulk Import',
-            reference: 'BULK_IMPORT',
-            createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-          }
-        });
+        // Stock movements are now managed through batches
 
       } catch (error: any) {
         console.error(`=== ERROR PROCESSING PRODUCT ${productData.name} ===`);
@@ -1255,7 +1197,6 @@ export const getStockMovements = async (req: AuthRequest, res: Response): Promis
               id: true,
               name: true,
               sku: true,
-              unitType: true,
               branch: {
                 select: {
                   id: true,

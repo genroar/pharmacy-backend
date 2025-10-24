@@ -142,7 +142,7 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
           throw new Error(`Product with ID ${item.productId} not found`);
         }
 
-        console.log('🔍 DEBUG - Found product:', product.name, 'Current stock:', product.stock);
+        console.log('🔍 DEBUG - Found product:', product.name);
 
         // Create refund item record
         const refundItem = await tx.refundItem.create({
@@ -157,16 +157,8 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
         });
 
         // Update product stock (add back to inventory)
-        const updatedProduct = await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stock: {
-              increment: item.quantity
-            }
-          }
-        });
-
-        console.log('🔍 DEBUG - Stock updated for', product.name, 'from', product.stock, 'to', updatedProduct.stock);
+        // Stock is now managed through batches, no need to update product stock directly
+        console.log('🔍 DEBUG - Stock return processed for', product.name);
 
         // Create stock movement record for the return
         await tx.stockMovement.create({

@@ -40,9 +40,7 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
             select: {
               id: true,
               name: true,
-              address: true,
               phone: true,
-              email: true
             }
           },
           _count: {
@@ -68,9 +66,7 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
             select: {
               id: true,
               name: true,
-              address: true,
               phone: true,
-              email: true
             }
           },
           _count: {
