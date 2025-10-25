@@ -347,7 +347,7 @@ export const createSale = async (req: AuthRequest, res: Response) => {
 
     // Get tax rate from settings
     const currentAdminId = req.user?.createdBy || req.user?.id;
-    let taxRate = 17; // Default tax rate
+    let taxRate = 0; // Tax disabled - set to 0
 
     if (currentAdminId) {
       try {
@@ -707,7 +707,7 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
     if (discountPercentage !== undefined && discountPercentage !== existingSale.discountPercentage) {
       newDiscountAmount = (existingSale.subtotal * discountPercentage) / 100;
       const subtotalAfterDiscount = existingSale.subtotal - newDiscountAmount;
-      newTaxAmount = subtotalAfterDiscount * 0.17; // 17% tax
+      newTaxAmount = subtotalAfterDiscount * 0; // Tax disabled - 0%
       newTotalAmount = subtotalAfterDiscount + newTaxAmount;
     }
 

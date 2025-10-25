@@ -21,33 +21,38 @@ export const RESOURCES = {
   USERS: 'users',
   EMPLOYEES: 'employees',
   BRANCHES: 'branches',
-  
+
   // Inventory Management
   PRODUCTS: 'products',
   CATEGORIES: 'categories',
   SUPPLIERS: 'suppliers',
   STOCK_MOVEMENTS: 'stock_movements',
-  
+
   // Sales & POS
   SALES: 'sales',
   RECEIPTS: 'receipts',
   REFUNDS: 'refunds',
-  
+
   // Reports & Analytics
   REPORTS: 'reports',
   DASHBOARD: 'dashboard',
   ANALYTICS: 'analytics',
-  
+
   // System Settings
   SETTINGS: 'settings',
   INTEGRATIONS: 'integrations',
   BACKUP: 'backup',
-  
+
   // Pharmacy Specific
   PRESCRIPTIONS: 'prescriptions',
   CUSTOMERS: 'customers',
   MEDICATION_HISTORY: 'medication_history',
-  
+
+  // Shift Management
+  SHIFTS: 'shifts',
+  SCHEDULED_SHIFTS: 'scheduled_shifts',
+  ATTENDANCE: 'attendance',
+
   // Financial
   COMMISSIONS: 'commissions',
   PAYMENTS: 'payments',
@@ -80,14 +85,14 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.BACKUP, actions: [ACTIONS.MANAGE], conditions: { branchId: false } },
       { resource: RESOURCES.ANALYTICS, actions: [ACTIONS.READ], conditions: { branchId: false } },
       { resource: RESOURCES.BILLING, actions: [ACTIONS.MANAGE], conditions: { branchId: false } },
-      
+
       // Cannot access day-to-day operations
       { resource: RESOURCES.PRODUCTS, actions: [], conditions: {} },
       { resource: RESOURCES.SALES, actions: [], conditions: {} },
       { resource: RESOURCES.PRESCRIPTIONS, actions: [], conditions: {} }
     ]
   },
-  
+
   {
     role: 'SUPER_ADMIN',
     description: 'Super Admin - Full access across all branches of their pharmacy',
@@ -110,7 +115,7 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.REFUNDS, actions: [ACTIONS.MANAGE], conditions: { branchId: true } }
     ]
   },
-  
+
   {
     role: 'MANAGER',
     description: 'Manager - Manages one store/branch operations',
@@ -127,14 +132,19 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.REFUNDS, actions: [ACTIONS.APPROVE, ACTIONS.REJECT], conditions: { branchId: true, limit: 1000 } },
       { resource: RESOURCES.CUSTOMERS, actions: [ACTIONS.MANAGE], conditions: { branchId: true } },
       { resource: RESOURCES.COMMISSIONS, actions: [ACTIONS.READ], conditions: { branchId: true } },
-      
+
+      // Shift Management - Full access for managers
+      { resource: RESOURCES.SHIFTS, actions: [ACTIONS.MANAGE], conditions: { branchId: true } },
+      { resource: RESOURCES.SCHEDULED_SHIFTS, actions: [ACTIONS.MANAGE], conditions: { branchId: true } },
+      { resource: RESOURCES.ATTENDANCE, actions: [ACTIONS.MANAGE], conditions: { branchId: true } },
+
       // Cannot change global settings
       { resource: RESOURCES.SETTINGS, actions: [ACTIONS.READ], conditions: { branchId: true } },
       { resource: RESOURCES.INTEGRATIONS, actions: [], conditions: {} },
       { resource: RESOURCES.BACKUP, actions: [], conditions: {} }
     ]
   },
-  
+
   {
     role: 'PHARMACIST',
     description: 'Pharmacist - Ensures prescriptions and medicine sales are compliant',
@@ -147,11 +157,11 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.SALES, actions: [ACTIONS.READ, ACTIONS.UPDATE], conditions: { branchId: true } },
       { resource: RESOURCES.STOCK_MOVEMENTS, actions: [ACTIONS.READ, ACTIONS.UPDATE], conditions: { branchId: true } },
       { resource: RESOURCES.DASHBOARD, actions: [ACTIONS.READ], conditions: { branchId: true } },
-      
+
       // Limited access
       { resource: RESOURCES.REPORTS, actions: [ACTIONS.READ], conditions: { branchId: true } },
       { resource: RESOURCES.CATEGORIES, actions: [ACTIONS.READ], conditions: { branchId: true } },
-      
+
       // Cannot access finances or employee management
       { resource: RESOURCES.USERS, actions: [], conditions: {} },
       { resource: RESOURCES.EMPLOYEES, actions: [], conditions: {} },
@@ -159,7 +169,7 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.SETTINGS, actions: [], conditions: {} }
     ]
   },
-  
+
   {
     role: 'CASHIER',
     description: 'Cashier - Handles customer checkout and frontend sales',
@@ -172,10 +182,10 @@ export const ROLE_PERMISSIONS: RolePermissions[] = [
       { resource: RESOURCES.CUSTOMERS, actions: [ACTIONS.READ, ACTIONS.CREATE, ACTIONS.UPDATE], conditions: { branchId: true } },
       { resource: RESOURCES.CATEGORIES, actions: [ACTIONS.READ], conditions: { branchId: true } },
       { resource: RESOURCES.DASHBOARD, actions: [ACTIONS.READ], conditions: { branchId: true } },
-      
+
       // Very limited access
       { resource: RESOURCES.REPORTS, actions: [ACTIONS.READ], conditions: { branchId: true, ownData: true } },
-      
+
       // Cannot edit inventory, manage users, or change settings
       { resource: RESOURCES.USERS, actions: [], conditions: {} },
       { resource: RESOURCES.EMPLOYEES, actions: [], conditions: {} },
@@ -204,31 +214,31 @@ export function hasPermission(
 ): boolean {
   const permissions = getRolePermissions(userRole);
   const permission = permissions.find(p => p.resource === resource);
-  
+
   if (!permission) return false;
   if (!permission.actions.includes(action)) return false;
-  
+
   // Check conditions
   if (permission.conditions) {
     const { branchId, ownData, limit } = permission.conditions;
-    
+
     // Branch ID condition
     if (branchId === true && userBranchId && targetBranchId && userBranchId !== targetBranchId) {
       return false;
     }
-    
+
     // Own data condition
     if (ownData === true && !isOwnData) {
       return false;
     }
-    
+
     // Limit condition (for refunds, etc.)
     if (limit && action === ACTIONS.CREATE) {
       // This would need to be checked against actual data
       // For now, we'll assume it's allowed
     }
   }
-  
+
   return true;
 }
 

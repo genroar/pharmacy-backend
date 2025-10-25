@@ -11,9 +11,7 @@ const createScheduledShiftSchema = Joi.object({
   endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
   date: Joi.date().required(),
   branchId: Joi.string().required(),
-  maxUsers: Joi.number().min(1).default(1),
-  notes: Joi.string().optional(),
-  assignedUserIds: Joi.array().items(Joi.string()).default([])
+  notes: Joi.string().optional().allow('')
 });
 
 const updateScheduledShiftSchema = Joi.object({
@@ -30,8 +28,24 @@ const updateScheduledShiftSchema = Joi.object({
 // Create a new scheduled shift
 export const createScheduledShift = async (req: Request, res: Response) => {
   try {
+    console.log('Creating scheduled shift with data:', req.body);
+
+    // Test database connection
+    try {
+      await prisma.$connect();
+      console.log('Database connection successful');
+    } catch (dbError) {
+      console.error('Database connection failed:', dbError);
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection failed',
+        error: dbError instanceof Error ? dbError.message : 'Unknown database error'
+      });
+    }
+
     const { error } = createScheduledShiftSchema.validate(req.body);
     if (error) {
+      console.log('Validation error:', error.details);
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -39,7 +53,7 @@ export const createScheduledShift = async (req: Request, res: Response) => {
       });
     }
 
-    const { name, startTime, endTime, date, branchId, maxUsers, notes, assignedUserIds } = req.body;
+    const { name, startTime, endTime, date, branchId, notes } = req.body;
 
     // Check if branch exists
     const branch = await prisma.branch.findUnique({
@@ -47,9 +61,26 @@ export const createScheduledShift = async (req: Request, res: Response) => {
     });
 
     if (!branch) {
+      console.log('Branch not found for ID:', branchId);
       return res.status(404).json({
         success: false,
         message: 'Branch not found'
+      });
+    }
+
+    console.log('Branch found:', branch.name);
+    console.log('Creating scheduled shift with data:', { name, startTime, endTime, date, branchId, notes });
+
+    // Test if we can query the scheduled shifts table
+    try {
+      const existingShifts = await prisma.scheduledShift.findMany({ take: 1 });
+      console.log('Database table accessible, existing shifts count:', existingShifts.length);
+    } catch (tableError) {
+      console.error('Database table access failed:', tableError);
+      return res.status(500).json({
+        success: false,
+        message: 'Database table access failed',
+        error: tableError instanceof Error ? tableError.message : 'Unknown table error'
       });
     }
 
@@ -61,13 +92,9 @@ export const createScheduledShift = async (req: Request, res: Response) => {
         endTime,
         date: new Date(date),
         branchId,
-        maxUsers,
-        notes,
-        assignedUsers: {
-          create: assignedUserIds.map((userId: string) => ({
-            userId
-          }))
-        }
+        maxUsers: 1, // Default value
+        notes: notes || null,
+        status: 'SCHEDULED' // Default status
       },
       include: {
         branch: {
@@ -75,31 +102,66 @@ export const createScheduledShift = async (req: Request, res: Response) => {
             id: true,
             name: true
           }
-        },
-        assignedUsers: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                role: true
-              }
-            }
-          }
         }
       }
     });
 
+    console.log('Scheduled shift created successfully:', scheduledShift.id);
+    console.log('Scheduled shift data:', JSON.stringify(scheduledShift, null, 2));
+
+    // Verify the shift was actually stored in the database
+    try {
+      const verifyShift = await prisma.scheduledShift.findUnique({
+        where: { id: scheduledShift.id },
+        include: { branch: true }
+      });
+      console.log('Verification - Shift found in database:', verifyShift ? 'YES' : 'NO');
+      if (verifyShift) {
+        console.log('Verification - Shift details:', {
+          id: verifyShift.id,
+          name: verifyShift.name,
+          date: verifyShift.date,
+          branchName: verifyShift.branch?.name
+        });
+      }
+    } catch (verifyError) {
+      console.error('Verification failed:', verifyError);
+    }
+
+    // Transform the data to match frontend expectations
+    const transformedShift = {
+      id: scheduledShift.id,
+      name: scheduledShift.name,
+      startTime: scheduledShift.startTime,
+      endTime: scheduledShift.endTime,
+      date: scheduledShift.date.toISOString().split('T')[0],
+      branchId: scheduledShift.branchId,
+      branchName: scheduledShift.branch?.name || 'Unknown Branch',
+      assignedUsers: [], // Empty array since we're not assigning users
+      maxUsers: scheduledShift.maxUsers,
+      status: scheduledShift.status,
+      notes: scheduledShift.notes,
+      createdAt: scheduledShift.createdAt.toISOString(),
+      updatedAt: scheduledShift.updatedAt.toISOString()
+    };
+
     return res.status(201).json({
       success: true,
-      data: scheduledShift,
+      data: transformedShift,
       message: 'Scheduled shift created successfully'
     });
   } catch (error) {
     console.error('Error creating scheduled shift:', error);
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : 'Unknown'
+    });
+
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 };

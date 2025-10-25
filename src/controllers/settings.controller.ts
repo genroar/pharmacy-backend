@@ -160,7 +160,7 @@ export const getTaxRate = async (req: AuthRequest, res: Response): Promise<void>
       }
     });
 
-    const taxRate = taxSetting ? parseFloat(taxSetting.value) : 17; // Default to 17%
+    const taxRate = taxSetting ? parseFloat(taxSetting.value) : 0; // Tax disabled - default to 0%
 
     res.json({
       success: true,
