@@ -19,7 +19,7 @@ const updateScheduledShiftSchema = Joi.object({
   startTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional(),
   endTime: Joi.string().pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/).optional(),
   date: Joi.date().optional(),
-  branchId: Joi.string().optional(),
+  branchId: Joi.string().allow('', null).optional(),
   maxUsers: Joi.number().min(1).optional(),
   notes: Joi.string().optional(),
   assignedUserIds: Joi.array().items(Joi.string()).optional()

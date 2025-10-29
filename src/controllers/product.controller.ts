@@ -11,7 +11,7 @@ import Joi from 'joi';
 
 const prisma = new PrismaClient();
 
-// Utility function to convert BigInt values to strings for JSON serialization
+// Utility function to convert BigInt and Date values to strings for JSON serialization
 function serializeBigInt(obj: any): any {
   if (obj === null || obj === undefined) {
     return obj;
@@ -21,11 +21,19 @@ function serializeBigInt(obj: any): any {
     return obj.toString();
   }
 
+  if (obj instanceof Date) {
+    return obj.toISOString();
+  }
+
   if (Array.isArray(obj)) {
     return obj.map(serializeBigInt);
   }
 
   if (typeof obj === 'object') {
+    // Check if it's a Date-like object (Prisma sometimes returns Date-like objects)
+    if (obj.constructor && obj.constructor.name === 'Date') {
+      return new Date(obj).toISOString();
+    }
     const serialized: any = {};
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
@@ -147,6 +155,7 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
               id: true,
               batchNo: true,
               quantity: true,
+              purchasePrice: true, // Add purchasePrice for total value calculation
               sellingPrice: true,
               expireDate: true
             },

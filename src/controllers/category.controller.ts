@@ -10,7 +10,8 @@ const createCategorySchema = Joi.object({
   name: Joi.string().required(),
   description: Joi.string().allow(''),
   type: Joi.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL').default('GENERAL'),
-  color: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6')
+  color: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
+  branchId: Joi.string().optional()
 });
 
 const updateCategorySchema = Joi.object({
@@ -29,32 +30,93 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
 
     const where: any = {};
 
-    // Data isolation based on user role and branch
-    if (req.user?.role === 'SUPERADMIN') {
-      // SUPERADMIN can see all categories
-    } else if (req.user?.role === 'ADMIN') {
-      // For ADMIN users, use their createdBy field (which should be their own ID for self-referencing)
-      where.createdBy = req.user.createdBy || req.user.id;
-    } else if (req.user?.createdBy) {
-      // Other users see categories from their admin
-      where.createdBy = req.user.createdBy;
-    } else if (req.user?.id) {
-      // Fallback to user ID if no createdBy
-      where.createdBy = req.user.id;
+    // Determine branch ID - prioritize query param, then user's branch, then selected branch
+    const targetBranchId = branchId && typeof branchId === 'string' && branchId.trim() !== ''
+      ? branchId
+      : req.user?.selectedBranchId || req.user?.branchId;
+
+    // Determine company ID for additional filtering
+    const targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+
+    // PRIORITY: Filter by branchId first (main isolation mechanism)
+    // Also include legacy categories (without branchId) for backward compatibility
+    if (targetBranchId) {
+      // For backward compatibility: show categories with matching branchId OR categories without branchId created by same admin
+      const branchConditions: any[] = [
+        { branchId: targetBranchId } // Categories assigned to this branch
+      ];
+
+      // Include legacy categories (without branchId) if they match the user's createdBy
+      // This allows backward compatibility with old data
+      if (req.user?.role !== 'SUPERADMIN') {
+        const userCreatedBy = req.user?.createdBy || req.user?.id;
+        if (userCreatedBy) {
+          // Legacy categories: no branchId AND created by same admin
+          branchConditions.push({
+            AND: [
+              { branchId: null }, // No branchId (legacy category)
+              { createdBy: userCreatedBy } // Created by same admin
+            ]
+          });
+        }
+      }
+
+      where.OR = branchConditions;
     } else {
-      // No access if no user context
-      where.createdBy = 'non-existent-admin-id';
+      // Only use createdBy as fallback if no branchId is available
+      // This handles backward compatibility with old data
+      if (req.user?.role === 'SUPERADMIN') {
+        // SUPERADMIN can see all categories if no branch selected
+        // No additional filtering needed
+      } else if (req.user?.role === 'ADMIN') {
+        // For ADMIN users, use their createdBy field
+        where.createdBy = req.user.createdBy || req.user.id;
+      } else if (req.user?.createdBy) {
+        // Other users see categories from their admin
+        where.createdBy = req.user.createdBy;
+      } else if (req.user?.id) {
+        // Fallback to user ID if no createdBy
+        where.createdBy = req.user.id;
+      } else {
+        // No access if no user context
+        where.createdBy = 'non-existent-admin-id';
+      }
     }
 
-    // For product creation, we want to show all categories belonging to the user/admin
-    // regardless of whether they have products in the current branch
-    // Branch filtering is only applied when specifically requested for inventory management
-    if (branchId && req.query.filterByProducts === 'true') {
-      // Only filter by products if explicitly requested (for inventory management)
+    // Build the final where clause
+    let finalWhere: any = { ...where };
+
+    // Add company filtering if available (additional isolation layer)
+    // Need to handle this carefully when OR conditions exist
+    if (targetCompanyId) {
+      if (finalWhere.OR) {
+        // For OR conditions, we want: (branchId match OR legacy) AND (companyId match OR no companyId)
+        // This ensures legacy categories without companyId are also shown
+        finalWhere.AND = [
+          { OR: finalWhere.OR },
+          {
+            OR: [
+              { companyId: targetCompanyId }, // Matches company
+              { companyId: null } // No companyId (allow legacy categories)
+            ]
+          }
+        ];
+        delete finalWhere.OR;
+      } else {
+        // For simple case, allow categories with matching companyId OR no companyId
+        finalWhere.OR = [
+          { companyId: targetCompanyId },
+          { companyId: null }
+        ];
+      }
+    }
+
+    // Optional: Filter by products if explicitly requested (for inventory management)
+    if (targetBranchId && req.query.filterByProducts === 'true') {
+      // Only show categories that have products in this branch
       const categoriesWithProductsInBranch = await prisma.product.findMany({
         where: {
-          branchId: String(branchId),
-          createdBy: where.createdBy
+          branchId: targetBranchId
         },
         select: {
           categoryId: true
@@ -62,22 +124,59 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
         distinct: ['categoryId']
       });
 
-      const categoryIds = categoriesWithProductsInBranch.map(p => p.categoryId);
-      where.id = {
-        in: categoryIds
-      };
+      // Filter out null/undefined categoryIds and get unique category IDs
+      const categoryIds = categoriesWithProductsInBranch
+        .map(p => p.categoryId)
+        .filter((id): id is string => typeof id === 'string' && id.trim() !== '');
+      if (categoryIds.length > 0) {
+        if (finalWhere.AND) {
+          finalWhere.AND.push({ id: { in: categoryIds } });
+        } else {
+          finalWhere.id = { in: categoryIds };
+        }
+      } else {
+        // No categories with products, return empty result
+        finalWhere.id = 'non-existent';
+      }
     }
 
+    // Add search conditions to finalWhere
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } }
-      ];
+      if (finalWhere.AND) {
+        finalWhere.AND.push({
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } }
+          ]
+        });
+      } else if (finalWhere.OR) {
+        // If OR exists (from branch conditions), wrap everything in AND
+        finalWhere = {
+          AND: [
+            { OR: finalWhere.OR },
+            {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { description: { contains: search, mode: 'insensitive' } }
+              ]
+            }
+          ]
+        };
+      } else {
+        finalWhere.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ];
+      }
     }
+
+    console.log('🔍 Category query where clause:', JSON.stringify(finalWhere, null, 2));
+    console.log('🔍 Target branchId:', targetBranchId);
+    console.log('🔍 Target companyId:', targetCompanyId);
 
     const [categories, total] = await Promise.all([
       prisma.category.findMany({
-        where,
+        where: finalWhere,
         skip,
         take,
         include: {
@@ -89,8 +188,13 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
         },
         orderBy: { name: 'asc' }
       }),
-      prisma.category.count({ where })
+      prisma.category.count({ where: finalWhere })
     ]);
+
+    console.log('🔍 Found categories:', categories.length, 'out of', total);
+    if (categories.length > 0) {
+      console.log('🔍 First category:', { id: categories[0].id, name: categories[0].name, branchId: categories[0].branchId });
+    }
 
     return res.json({
       success: true,
@@ -120,23 +224,35 @@ export const getCategory = async (req: AuthRequest, res: Response) => {
     // Build where clause with data isolation
     const where: any = { id };
 
-    // Data isolation based on user role and branch
-    if (req.user?.role === 'SUPERADMIN') {
-      // SUPERADMIN can see all categories
-    } else if (req.user?.role === 'ADMIN') {
-      // For ADMIN users, use their createdBy field (which should be their own ID for self-referencing)
-      where.createdBy = req.user.createdBy || req.user.id;
-    } else if (req.user?.createdBy) {
-      // Other users see categories from their admin and branch
-      where.createdBy = req.user.createdBy;
-      where.branchId = req.user.branchId;
-    } else if (req.user?.id) {
-      // Fallback to user ID if no createdBy
-      where.createdBy = req.user.id;
-      where.branchId = req.user.branchId;
+    // Determine branch ID - prioritize user's selected branch, then user's branch
+    const targetBranchId = req.user?.selectedBranchId || req.user?.branchId;
+    const targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+
+    // PRIORITY: Filter by branchId first (main isolation mechanism)
+    if (targetBranchId) {
+      where.branchId = targetBranchId;
     } else {
-      // No access if no user context
-      where.createdBy = 'non-existent-admin-id';
+      // Only use createdBy as fallback if no branchId is available
+      if (req.user?.role === 'SUPERADMIN') {
+        // SUPERADMIN can see all categories
+      } else if (req.user?.role === 'ADMIN') {
+        // For ADMIN users, use their createdBy field
+        where.createdBy = req.user.createdBy || req.user.id;
+      } else if (req.user?.createdBy) {
+        // Other users see categories from their admin
+        where.createdBy = req.user.createdBy;
+      } else if (req.user?.id) {
+        // Fallback to user ID if no createdBy
+        where.createdBy = req.user.id;
+      } else {
+        // No access if no user context
+        where.createdBy = 'non-existent-admin-id';
+      }
+    }
+
+    // Add company filtering if available
+    if (targetCompanyId) {
+      where.companyId = targetCompanyId;
     }
 
     const category = await prisma.category.findFirst({
@@ -186,43 +302,76 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { name, description, type, color } = req.body;
+    const { name, description, type, color, branchId } = req.body;
 
-    // Check if category with this name already exists for this admin
-    const existingCategory = await prisma.category.findFirst({
-      where: {
-        name: name,
-        createdBy: req.user?.createdBy || req.user?.id
-      }
-    });
+    // Get user's branch and company info
+    const userBranchId = req.user?.branchId;
+    const userCompanyId = req.user?.companyId;
 
-    if (existingCategory) {
-      console.log('Category with this name already exists for this admin:', existingCategory);
+    // Use provided branchId or user's branchId (MUST have a branchId)
+    const categoryBranchId = branchId || userBranchId;
+    const categoryCompanyId = userCompanyId;
+
+    // Require branchId for category creation
+    if (!categoryBranchId) {
+      console.log('Category creation failed: No branchId provided');
       return res.status(400).json({
         success: false,
-        message: 'Category with this name already exists'
+        message: 'Branch ID is required to create a category. Please ensure you are associated with a branch.'
       });
     }
 
-    console.log('Creating category with data:', {
+    // Check if category with this name already exists for this branch
+    // Priority: Check by branchId first (primary isolation)
+    const where: any = {
+      name: name,
+      branchId: categoryBranchId // Always check by branchId
+    };
+
+    const existingCategory = await prisma.category.findFirst({
+      where
+    });
+
+    if (existingCategory) {
+      console.log('Category with this name already exists for this branch:', existingCategory);
+      return res.status(400).json({
+        success: false,
+        message: 'Category with this name already exists in this branch'
+      });
+    }
+
+    // Create category with branch and company IDs (branchId is required)
+    const data: any = {
       name,
-      description,
-      type,
-      color,
+      description: description || null,
+      type: type || 'GENERAL',
+      color: color || '#3B82F6',
+      branchId: categoryBranchId, // Always required - ensures branch isolation
       createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
+    };
+
+    // Add companyId if available (additional isolation layer)
+    if (categoryCompanyId) {
+      data.companyId = categoryCompanyId;
+    }
+
+    console.log('Creating category with data:', {
+      name: data.name,
+      branchId: data.branchId,
+      companyId: data.companyId,
+      createdBy: data.createdBy
     });
 
     const category = await prisma.category.create({
-      data: {
-        name,
-        description: description || null,
-        type: type || 'GENERAL',
-        color: color || '#3B82F6',
-        createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-      }
+      data
     });
 
-    console.log('Category created successfully:', category);
+    console.log('Category created successfully:', {
+      id: category.id,
+      name: category.name,
+      branchId: category.branchId,
+      companyId: category.companyId
+    });
 
     return res.status(201).json({
       success: true,
@@ -267,11 +416,23 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
 
     // Check if name already exists for this branch (if being updated)
     if (updateData.name && updateData.name !== existingCategory.name) {
+      const targetBranchId = req.user?.selectedBranchId || req.user?.branchId || existingCategory.branchId;
+
+      const nameExistsWhere: any = {
+        name: updateData.name,
+        id: { not: id } // Exclude current category
+      };
+
+      // Check by branchId (preferred method)
+      if (targetBranchId) {
+        nameExistsWhere.branchId = targetBranchId;
+      } else {
+        // Fallback to createdBy if no branchId
+        nameExistsWhere.createdBy = req.user?.createdBy || req.user?.id;
+      }
+
       const nameExists = await prisma.category.findFirst({
-        where: {
-          name: updateData.name,
-          createdBy: req.user?.createdBy || req.user?.id
-        }
+        where: nameExistsWhere
       });
 
       if (nameExists) {

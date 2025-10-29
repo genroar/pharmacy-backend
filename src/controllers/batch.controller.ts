@@ -4,6 +4,45 @@ import Joi from 'joi';
 
 const prisma = new PrismaClient();
 
+// Helper function to serialize BigInt and Date values
+const serializeBigInt = (obj: any): any => {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'bigint') return obj.toString();
+
+  // Handle Date objects - check multiple ways Prisma might return dates
+  if (obj instanceof Date) {
+    return obj.toISOString();
+  }
+
+  // Check for Date-like objects (Prisma sometimes returns these)
+  if (obj && typeof obj === 'object') {
+    // Check if it has Date constructor name
+    if (obj.constructor && obj.constructor.name === 'Date') {
+      const dateValue = new Date(obj);
+      if (!isNaN(dateValue.getTime())) {
+        return dateValue.toISOString();
+      }
+    }
+    // Check if object has date-like properties (timestamp, getTime, etc.)
+    if (obj.getTime && typeof obj.getTime === 'function') {
+      const dateValue = new Date(obj.getTime());
+      if (!isNaN(dateValue.getTime())) {
+        return dateValue.toISOString();
+      }
+    }
+  }
+
+  if (Array.isArray(obj)) return obj.map(serializeBigInt);
+  if (typeof obj === 'object') {
+    const serialized: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      serialized[key] = serializeBigInt(value);
+    }
+    return serialized;
+  }
+  return obj;
+};
+
 // Validation schemas
 const createBatchSchema = Joi.object({
   batchNo: Joi.string().required().messages({
@@ -91,6 +130,176 @@ const updateBatchSchema = Joi.object({
     'any.required': 'Units per box is required'
   })
 });
+
+// Get low stock batches for order purchase
+export const getLowStockBatches = async (req: any, res: Response) => {
+  try {
+    console.log('🔍 Get low stock batches request:', req.query);
+    const { page = 1, limit = 50, search = '', branchId } = req.query;
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+
+    // Determine the branch and company context based on user role
+    let targetBranchId = branchId || req.user?.selectedBranchId || req.user?.branchId;
+    let targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+
+    // For non-superadmin users, ensure they only see their branch data
+    if (req.user?.role !== 'SUPERADMIN') {
+      if (!targetBranchId) {
+        targetBranchId = req.user?.branchId;
+      }
+      if (!targetCompanyId) {
+        targetCompanyId = req.user?.companyId;
+      }
+    }
+
+    if (!targetBranchId || !targetCompanyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Branch and company context required'
+      });
+    }
+
+    // Get products with their batches and min stock requirements
+    const products = await prisma.product.findMany({
+      where: {
+        branchId: targetBranchId,
+        companyId: targetCompanyId,
+        isActive: true
+      },
+      include: {
+        batches: {
+          where: {
+            branchId: targetBranchId,
+            companyId: targetCompanyId,
+            isActive: true,
+            quantity: { gt: 0 }
+          },
+          orderBy: { expireDate: 'asc' }
+        },
+        category: {
+          select: {
+            name: true
+          }
+        },
+        supplier: {
+          select: {
+            name: true
+          }
+        },
+        branch: {
+          select: {
+            name: true
+          }
+        }
+      }
+    });
+
+    // Calculate low stock batches and batches requiring attention
+    const batchesRequiringAttention = [];
+
+    for (const product of products) {
+      const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+
+      // Check each batch individually for various conditions
+      for (const batch of product.batches) {
+        let shouldInclude = false;
+        let reason = '';
+
+        // Check if individual batch is low stock (less than 20% of min stock)
+        const batchLowStockThreshold = product.minStock * 0.2;
+        if (batch.quantity <= batchLowStockThreshold) {
+          shouldInclude = true;
+          reason = 'Low Stock Batch';
+        }
+
+        // Check if product total stock is low
+        if (totalStock <= product.minStock) {
+          shouldInclude = true;
+          reason = reason ? `${reason}, Product Low Stock` : 'Product Low Stock';
+        }
+
+        // Check if batch is near expiry (within 30 days)
+        if (batch.expireDate) {
+          const daysUntilExpiry = Math.ceil((new Date(batch.expireDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+            shouldInclude = true;
+            reason = reason ? `${reason}, Near Expiry` : 'Near Expiry';
+          }
+        }
+
+        // Check if batch is expired
+        if (batch.expireDate && new Date(batch.expireDate) < new Date()) {
+          shouldInclude = true;
+          reason = reason ? `${reason}, Expired` : 'Expired';
+        }
+
+        if (shouldInclude) {
+          const suggestedOrderQty = Math.max(0, product.minStock * 2 - totalStock);
+
+          batchesRequiringAttention.push({
+            id: batch.id,
+            batchNo: batch.batchNo,
+            productId: product.id,
+            productName: product.name,
+            productSku: product.barcode || product.id,
+            category: product.category?.name || 'Uncategorized',
+            supplier: product.supplier?.name || 'Unknown Supplier',
+            branch: {
+              id: product.branchId,
+              name: product.branch?.name || 'Unknown Branch'
+            },
+            currentStock: batch.quantity,
+            totalProductStock: totalStock,
+            minStock: product.minStock,
+            maxStock: product.maxStock || product.minStock * 10,
+            unitPrice: batch.sellingPrice,
+            expireDate: batch.expireDate ? batch.expireDate.toISOString() : null,
+            productionDate: batch.productionDate ? batch.productionDate.toISOString() : null,
+            orderQuantity: suggestedOrderQty,
+            isLowStock: batch.quantity <= batchLowStockThreshold || totalStock <= product.minStock,
+            isCritical: batch.quantity <= (batchLowStockThreshold * 0.5) || totalStock <= (product.minStock * 0.5),
+            isNearExpiry: batch.expireDate ? Math.ceil((new Date(batch.expireDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)) <= 30 : false,
+            isExpired: batch.expireDate ? new Date(batch.expireDate) < new Date() : false,
+            reason: reason
+          });
+        }
+      }
+    }
+
+    // Apply search filter
+    let filteredBatches = batchesRequiringAttention;
+    if (search) {
+      filteredBatches = batchesRequiringAttention.filter(batch =>
+        batch.productName.toLowerCase().includes(search.toLowerCase()) ||
+        batch.productSku.toLowerCase().includes(search.toLowerCase()) ||
+        batch.category.toLowerCase().includes(search.toLowerCase()) ||
+        batch.batchNo.toLowerCase().includes(search.toLowerCase())
+      );
+    }
+
+    // Apply pagination
+    const paginatedBatches = filteredBatches.slice(skip, skip + parseInt(limit as string));
+
+    return res.json({
+      success: true,
+      data: {
+        batches: serializeBigInt(paginatedBatches),
+        pagination: {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          total: filteredBatches.length,
+          pages: Math.ceil(filteredBatches.length / parseInt(limit as string))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get low stock batches error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
 
 // Get all batches
 export const getBatches = async (req: any, res: Response) => {
@@ -202,7 +411,7 @@ export const getBatches = async (req: any, res: Response) => {
     res.json({
       success: true,
       data: {
-        batches,
+        batches: serializeBigInt(batches),
         pagination: {
           page: parseInt(page as string),
           limit: parseInt(limit as string),
@@ -255,7 +464,7 @@ export const getBatchById = async (req: any, res: Response) => {
 
     return res.json({
       success: true,
-      data: batch,
+      data: serializeBigInt(batch),
     });
   } catch (error) {
     console.error('Get batch by ID error:', error);
@@ -479,7 +688,7 @@ export const updateBatch = async (req: any, res: Response) => {
 
     return res.json({
       success: true,
-      data: batch,
+      data: serializeBigInt(batch),
       message: 'Batch updated successfully',
     });
   } catch (error) {
@@ -674,7 +883,7 @@ export const getNearExpiryBatches = async (req: any, res: Response) => {
 
     return res.json({
       success: true,
-      data: batches,
+      data: serializeBigInt(batches),
     });
   } catch (error) {
     console.error('Get near expiry batches error:', error);

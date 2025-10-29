@@ -13,6 +13,7 @@ model User {
   email         String          @unique
   password      String
   name          String
+  profileImage  String?
   role          UserRole        @default(CASHIER)
   branchId      String?
   companyId     String?
@@ -82,6 +83,7 @@ model Company {
   sales        Sale[]
   batches      Batch[]
   purchases    Purchase[]
+  categories   Category[]
 
   @@map("companies")
 }
@@ -110,6 +112,7 @@ model Branch {
   users           User[]
   batches         Batch[]
   purchases       Purchase[]
+  categories      Category[]
   company         Company      @relation(fields: [companyId], references: [id])
 
   @@unique([name, companyId], name: "branch_name_per_company")
@@ -117,17 +120,21 @@ model Branch {
 }
 
 model Category {
-  id          String       @id @default(cuid())
+  id          String        @id @default(cuid())
   name        String
   description String?
-  type        CategoryType @default(GENERAL)
-  color       String?      @default("#3B82F6")
+  type        CategoryType  @default(GENERAL)
+  color       String?       @default("#3B82F6")
+  branchId    String?
+  companyId   String?
   createdBy   String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  branch      Branch?       @relation(fields: [branchId], references: [id])
+  company     Company?       @relation(fields: [companyId], references: [id])
   products    Product[]
 
-  @@unique([name, createdBy], name: "category_name_per_admin")
+  @@unique([name, branchId], name: "category_name_per_branch")
   @@map("categories")
 }
 

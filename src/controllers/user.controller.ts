@@ -407,3 +407,51 @@ export const deleteUser = async (req: Request, res: Response) => {
     });
   }
 };
+
+export const activateUser = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id }
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update user active status
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: { isActive },
+      include: {
+        branch: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    // Remove password from response
+    const { password, ...userWithoutPassword } = updatedUser;
+
+    return res.json({
+      success: true,
+      data: userWithoutPassword,
+      message: `User ${isActive ? 'activated' : 'deactivated'} successfully`
+    });
+  } catch (error) {
+    console.error('Activate user error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};

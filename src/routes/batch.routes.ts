@@ -6,7 +6,8 @@ import {
   updateBatch,
   deleteBatch,
   getNearExpiryBatches,
-  restockBatch
+  restockBatch,
+  getLowStockBatches
 } from '../controllers/batch.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
@@ -17,6 +18,7 @@ router.use(authenticate);
 
 // Batch routes
 router.get('/', getBatches);
+router.get('/low-stock', getLowStockBatches);
 router.get('/near-expiry', getNearExpiryBatches);
 router.get('/:id', getBatchById);
 router.post('/', createBatch);

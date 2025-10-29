@@ -17,10 +17,17 @@ const loginSchema = Joi.object({
 const registerSchema = Joi.object({
   username: Joi.string().min(3).max(30).required(),
   email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
+  password: Joi.string()
+    .min(8)
+    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).*$/)
+    .required()
+    .messages({
+      'string.min': 'Password must be at least 8 characters long',
+      'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+    }),
   name: Joi.string().required(),
   role: Joi.string().valid('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER').required(),
-  branchId: Joi.string().optional(),
+  branchId: Joi.string().allow('', null).optional(),
   branchData: Joi.object({
     name: Joi.string().required(),
     address: Joi.string().required(),
@@ -46,14 +53,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const { usernameOrEmail, password }: { usernameOrEmail: string; password: string } = req.body;
     console.log('🔍 Login attempt - Username/Email:', usernameOrEmail);
 
-    // Find user by username or email
+    // Find user by username or email (check both active and inactive users)
     const user = await prisma.user.findFirst({
       where: {
         OR: [
           { username: usernameOrEmail },
           { email: usernameOrEmail }
-        ],
-        isActive: true
+        ]
       },
       include: {
         branch: true
@@ -65,6 +71,17 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       res.status(401).json({
         success: false,
         message: 'Invalid credentials'
+      });
+      return;
+    }
+
+    // Check if user account is active
+    if (!user.isActive) {
+      console.log('❌ User account is disabled:', usernameOrEmail);
+      res.status(403).json({
+        success: false,
+        message: 'Account is disabled. Please contact support at +923107100663 to activate your account.',
+        accountDisabled: true
       });
       return;
     }
@@ -107,7 +124,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
           name: user.name,
           role: user.role,
           branchId: user.branchId,
-          createdBy: user.createdBy
+          createdBy: user.createdBy,
+          isActive: user.isActive,
+          email: user.email
         },
         token
       }
@@ -134,6 +153,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     }
 
     const { username, email, password, name, role, branchId, branchData } = req.body;
+
+    // Convert empty branchId to null for ADMIN and SUPERADMIN users
+    const processedBranchId = (branchId === '' || branchId === null || branchId === undefined) ? null : branchId;
 
     // Check if username already exists
     const existingUsername = await prisma.user.findUnique({
@@ -180,6 +202,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: null, // No branch initially
           companyId: null, // No company initially
+          isActive: false, // New users are disabled by default
           createdBy: null // Will be updated to self-reference after user creation
         }
       });
@@ -191,7 +214,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       });
     } else {
       // For other roles (MANAGER, CASHIER), they need to be assigned to a branch
-      if (!branchId) {
+      if (!processedBranchId) {
         res.status(400).json({
           success: false,
           message: 'Branch ID is required for non-admin users'
@@ -201,7 +224,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
       // Check if existing branch exists
       const branch = await prisma.branch.findUnique({
-        where: { id: branchId }
+        where: { id: processedBranchId }
       });
 
       if (!branch) {
@@ -220,8 +243,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           password: hashedPassword,
           name,
           role,
-          branchId: branchId,
+          branchId: processedBranchId,
           companyId: branch.companyId,
+          isActive: false, // New users are disabled by default
           createdBy: null // Will be set by the admin who creates this user
         },
         include: {
@@ -257,7 +281,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           name: user.name,
           role: user.role,
           branchId: user.branchId,
-          createdBy: user.createdBy
+          createdBy: user.createdBy,
+          isActive: user.isActive,
+          email: user.email
         },
         token
       }
@@ -375,7 +401,8 @@ export const changePassword = async (req: Request, res: Response): Promise<void>
 // Update profile schema
 const updateProfileSchema = Joi.object({
   name: Joi.string().optional(),
-  email: Joi.string().email().optional()
+  email: Joi.string().email().optional(),
+  profileImage: Joi.string().uri().optional()
 });
 
 export const updateProfile = async (req: Request, res: Response): Promise<void> => {
@@ -391,7 +418,7 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
     }
 
     const userId = (req as any).user.id;
-    const { name, email } = req.body;
+    const { name, email, profileImage } = req.body;
 
     // Check if email is already taken by another user
     if (email) {
@@ -416,7 +443,8 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
       where: { id: userId },
       data: {
         ...(name && { name }),
-        ...(email && { email })
+        ...(email && { email }),
+        ...(profileImage !== undefined && { profileImage })
       }
     });
 
@@ -428,6 +456,7 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
         name: updatedUser.name,
         email: updatedUser.email,
         username: updatedUser.username,
+        profileImage: updatedUser.profileImage,
         role: updatedUser.role
       }
     });

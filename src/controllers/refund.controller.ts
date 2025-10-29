@@ -6,7 +6,7 @@ import Joi from 'joi';
 
 const prisma = new PrismaClient();
 
-// Utility function to convert BigInt and Decimal values to strings for JSON serialization
+// Utility function to convert BigInt, Decimal, and Date values to strings for JSON serialization
 function serializeBigInt(obj: any): any {
   if (obj === null || obj === undefined) {
     return obj;
@@ -14,6 +14,10 @@ function serializeBigInt(obj: any): any {
 
   if (typeof obj === 'bigint') {
     return obj.toString();
+  }
+
+  if (obj instanceof Date) {
+    return obj.toISOString();
   }
 
   // Handle Prisma Decimal values
@@ -31,6 +35,10 @@ function serializeBigInt(obj: any): any {
   }
 
   if (typeof obj === 'object') {
+    // Check if it's a Date-like object (Prisma sometimes returns Date-like objects)
+    if (obj.constructor && obj.constructor.name === 'Date') {
+      return new Date(obj).toISOString();
+    }
     const serialized: any = {};
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {

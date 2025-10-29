@@ -35,7 +35,8 @@ export const getCustomers = async (req: AuthRequest, res: Response) => {
       limit = 10,
       search = '',
       branchId = '',
-      vip = false
+      vip = false,
+      createdByRole = ''  // New parameter for filtering by creator role
     } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -70,8 +71,49 @@ export const getCustomers = async (req: AuthRequest, res: Response) => {
       ];
     }
 
+    // Filter by creator role if specified
+    if (createdByRole && typeof createdByRole === 'string' && createdByRole.trim() !== '') {
+      // First, get all users with the specified role
+      // The role parameter should be uppercase (ADMIN, MANAGER, CASHIER)
+      const usersWithRole = await prisma.user.findMany({
+        where: { role: createdByRole as any, isActive: true },
+        select: { id: true }
+      });
+
+      const userIds = usersWithRole.map(u => u.id);
+
+      // Then filter customers by createdBy matching these user IDs
+      if (userIds.length > 0) {
+        // Get the base createdBy filter for data isolation
+        const baseCreatedBy = req.user?.createdBy || req.user?.id;
+
+        if (baseCreatedBy) {
+          // If there's a base filter, use AND to combine both conditions
+          // Customers must be created by the current admin AND by users with the specified role
+          where.AND = [
+            { createdBy: baseCreatedBy },
+            { createdBy: { in: userIds } }
+          ];
+          // Remove the single createdBy condition since we're using AND now
+          delete where.createdBy;
+        } else {
+          where.createdBy = { in: userIds };
+        }
+      } else {
+        // If no users with that role exist, return empty results
+        return res.json({
+          success: true,
+          data: {
+            customers: [],
+            pagination: { page: Number(page), limit: Number(limit), total: 0, pages: 0 }
+          }
+        });
+      }
+    }
+
     console.log('Customer query where clause:', where);
     console.log('Customer query pagination:', { skip, take });
+    console.log('Filter by creator role:', createdByRole);
 
     const [customers, total] = await Promise.all([
       prisma.customer.findMany({

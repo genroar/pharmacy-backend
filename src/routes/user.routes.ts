@@ -4,7 +4,8 @@ import {
   getUser,
   createUser,
   updateUser,
-  deleteUser
+  deleteUser,
+  activateUser
 } from '../controllers/user.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -21,5 +22,8 @@ router.get('/:id', authorize('MANAGER', 'ADMIN', 'SUPERADMIN'), getUser);
 router.post('/', authorize('MANAGER', 'ADMIN', 'SUPERADMIN'), createUser);
 router.put('/:id', authorize('MANAGER', 'ADMIN', 'SUPERADMIN'), updateUser);
 router.delete('/:id', authorize('MANAGER', 'ADMIN', 'SUPERADMIN'), deleteUser);
+
+// User activation (SuperAdmin only)
+router.patch('/:id/activate', authorize('SUPERADMIN'), activateUser);
 
 export default router;

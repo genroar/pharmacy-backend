@@ -10,6 +10,8 @@ const createSupplierSchema = Joi.object({
   name: Joi.string().required(),
   contactPerson: Joi.string().required(),
   phone: Joi.string().required(),
+  email: Joi.string().email().allow('').optional(),
+  address: Joi.string().allow('').optional(),
   manufacturerId: Joi.string().allow('').optional()
 });
 
@@ -17,13 +19,15 @@ const updateSupplierSchema = Joi.object({
   name: Joi.string(),
   contactPerson: Joi.string(),
   phone: Joi.string(),
+  email: Joi.string().email().allow('').optional(),
+  address: Joi.string().allow('').optional(),
   manufacturerId: Joi.string().allow('').optional(),
   isActive: Joi.boolean()
 });
 
 export const getSuppliers = async (req: AuthRequest, res: Response) => {
   try {
-    const { page = 1, limit = 50, search = '', active = true, branchId = '' } = req.query;
+    const { page = 1, limit = 50, search = '', active = true, branchId = '', manufacturerId = '' } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
@@ -58,6 +62,11 @@ export const getSuppliers = async (req: AuthRequest, res: Response) => {
           branchId: branchId
         }
       };
+    }
+
+    // Filter suppliers by manufacturer if manufacturerId is provided
+    if (manufacturerId) {
+      where.manufacturerId = manufacturerId;
     }
 
     if (search) {
