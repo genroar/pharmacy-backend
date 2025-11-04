@@ -16,10 +16,17 @@ const loginSchema = joi_1.default.object({
 const registerSchema = joi_1.default.object({
     username: joi_1.default.string().min(3).max(30).required(),
     email: joi_1.default.string().email().required(),
-    password: joi_1.default.string().min(6).required(),
+    password: joi_1.default.string()
+        .min(8)
+        .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).*$/)
+        .required()
+        .messages({
+        'string.min': 'Password must be at least 8 characters long',
+        'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
+    }),
     name: joi_1.default.string().required(),
-    role: joi_1.default.string().valid('PRODUCT_OWNER', 'SUPERADMIN', 'ADMIN', 'MANAGER', 'PHARMACIST', 'CASHIER').required(),
-    branchId: joi_1.default.string().optional(),
+    role: joi_1.default.string().valid('SUPERADMIN', 'ADMIN', 'MANAGER', 'CASHIER').required(),
+    branchId: joi_1.default.string().allow('', null).optional(),
     branchData: joi_1.default.object({
         name: joi_1.default.string().required(),
         address: joi_1.default.string().required(),
@@ -46,8 +53,7 @@ const login = async (req, res) => {
                 OR: [
                     { username: usernameOrEmail },
                     { email: usernameOrEmail }
-                ],
-                isActive: true
+                ]
             },
             include: {
                 branch: true
@@ -58,6 +64,15 @@ const login = async (req, res) => {
             res.status(401).json({
                 success: false,
                 message: 'Invalid credentials'
+            });
+            return;
+        }
+        if (!user.isActive) {
+            console.log('❌ User account is disabled:', usernameOrEmail);
+            res.status(403).json({
+                success: false,
+                message: 'Account is disabled. Please contact support at +923107100663 to activate your account.',
+                accountDisabled: true
             });
             return;
         }
@@ -90,7 +105,9 @@ const login = async (req, res) => {
                     name: user.name,
                     role: user.role,
                     branchId: user.branchId,
-                    createdBy: user.createdBy
+                    createdBy: user.createdBy,
+                    isActive: user.isActive,
+                    email: user.email
                 },
                 token
             }
@@ -117,26 +134,32 @@ const register = async (req, res) => {
             return;
         }
         const { username, email, password, name, role, branchId, branchData } = req.body;
-        const existingUser = await prisma.user.findFirst({
-            where: {
-                OR: [
-                    { username },
-                    { email }
-                ]
-            }
+        const processedBranchId = (branchId === '' || branchId === null || branchId === undefined) ? null : branchId;
+        const existingUsername = await prisma.user.findUnique({
+            where: { username }
         });
-        if (existingUser) {
+        if (existingUsername) {
             res.status(400).json({
                 success: false,
-                message: 'User with this username or email already exists'
+                message: 'Username already exists',
+                field: 'username'
             });
             return;
         }
-        let finalBranchId = branchId;
-        let branch;
+        const existingEmail = await prisma.user.findUnique({
+            where: { email }
+        });
+        if (existingEmail) {
+            res.status(400).json({
+                success: false,
+                message: 'Email already exists',
+                field: 'email'
+            });
+            return;
+        }
         let user;
-        if (branchData && (role === 'ADMIN' || role === 'SUPERADMIN')) {
-            const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+        const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+        if (role === 'ADMIN' || role === 'SUPERADMIN') {
             user = await prisma.user.create({
                 data: {
                     username,
@@ -144,7 +167,9 @@ const register = async (req, res) => {
                     password: hashedPassword,
                     name,
                     role,
-                    branchId: 'temp',
+                    branchId: null,
+                    companyId: null,
+                    isActive: false,
                     createdBy: null
                 }
             });
@@ -152,25 +177,17 @@ const register = async (req, res) => {
                 where: { id: user.id },
                 data: { createdBy: user.id }
             });
-            branch = await prisma.branch.create({
-                data: {
-                    name: branchData.name,
-                    address: branchData.address,
-                    phone: branchData.phone,
-                    email: email,
-                    isActive: true
-                }
-            });
-            finalBranchId = branch.id;
-            user = await prisma.user.update({
-                where: { id: user.id },
-                data: { branchId: finalBranchId },
-                include: { branch: true }
-            });
         }
-        else if (branchId) {
-            branch = await prisma.branch.findUnique({
-                where: { id: branchId }
+        else {
+            if (!processedBranchId) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Branch ID is required for non-admin users'
+                });
+                return;
+            }
+            const branch = await prisma.branch.findUnique({
+                where: { id: processedBranchId }
             });
             if (!branch) {
                 res.status(400).json({
@@ -179,7 +196,6 @@ const register = async (req, res) => {
                 });
                 return;
             }
-            const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
             user = await prisma.user.create({
                 data: {
                     username,
@@ -187,20 +203,16 @@ const register = async (req, res) => {
                     password: hashedPassword,
                     name,
                     role,
-                    branchId: finalBranchId,
-                    createdBy: (role === 'ADMIN' || role === 'SUPERADMIN') ? null : undefined
+                    branchId: processedBranchId,
+                    companyId: branch.companyId,
+                    isActive: false,
+                    createdBy: null
                 },
                 include: {
-                    branch: true
+                    branch: true,
+                    company: true
                 }
             });
-        }
-        else {
-            res.status(400).json({
-                success: false,
-                message: 'Either branchId or branchData must be provided'
-            });
-            return;
         }
         if (!process.env.JWT_SECRET) {
             throw new Error('JWT_SECRET is not defined');
@@ -221,7 +233,9 @@ const register = async (req, res) => {
                     name: user.name,
                     role: user.role,
                     branchId: user.branchId,
-                    createdBy: user.createdBy
+                    createdBy: user.createdBy,
+                    isActive: user.isActive,
+                    email: user.email
                 },
                 token
             }
@@ -229,9 +243,15 @@ const register = async (req, res) => {
     }
     catch (error) {
         console.error('Register error:', error);
+        console.error('Error details:', {
+            message: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined,
+            name: error instanceof Error ? error.name : 'Unknown'
+        });
         res.status(500).json({
             success: false,
-            message: 'Internal server error'
+            message: 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.message : 'Unknown error') : undefined
         });
     }
 };
@@ -319,7 +339,8 @@ const changePassword = async (req, res) => {
 exports.changePassword = changePassword;
 const updateProfileSchema = joi_1.default.object({
     name: joi_1.default.string().optional(),
-    email: joi_1.default.string().email().optional()
+    email: joi_1.default.string().email().optional(),
+    profileImage: joi_1.default.string().uri().optional()
 });
 const updateProfile = async (req, res) => {
     try {
@@ -333,7 +354,7 @@ const updateProfile = async (req, res) => {
             return;
         }
         const userId = req.user.id;
-        const { name, email } = req.body;
+        const { name, email, profileImage } = req.body;
         if (email) {
             const existingUser = await prisma.user.findFirst({
                 where: {
@@ -353,7 +374,8 @@ const updateProfile = async (req, res) => {
             where: { id: userId },
             data: {
                 ...(name && { name }),
-                ...(email && { email })
+                ...(email && { email }),
+                ...(profileImage !== undefined && { profileImage })
             }
         });
         res.json({
@@ -364,6 +386,7 @@ const updateProfile = async (req, res) => {
                 name: updatedUser.name,
                 email: updatedUser.email,
                 username: updatedUser.username,
+                profileImage: updatedUser.profileImage,
                 role: updatedUser.role
             }
         });

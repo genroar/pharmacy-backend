@@ -51,9 +51,7 @@ const getAdmins = async (req, res) => {
                         select: {
                             id: true,
                             name: true,
-                            address: true,
                             phone: true,
-                            email: true
                         }
                     },
                     _count: {
@@ -138,9 +136,7 @@ const getAdmin = async (req, res) => {
                     select: {
                         id: true,
                         name: true,
-                        address: true,
                         phone: true,
-                        email: true
                     }
                 }
             }
@@ -177,7 +173,6 @@ const getAdmin = async (req, res) => {
             email: admin.email,
             phone: admin.branch?.phone || '',
             company: admin.branch?.name || '',
-            address: admin.branch?.address || '',
             userCount,
             managerCount,
             totalSales: salesStats._sum.totalAmount || 0,
@@ -240,12 +235,23 @@ const createAdmin = async (req, res) => {
             return;
         }
         const result = await prisma.$transaction(async (tx) => {
-            const branch = await tx.branch.create({
+            const newCompany = await tx.company.create({
                 data: {
                     name: company,
+                    description: `Company for ${name}`,
                     address: 'Default Address',
                     phone: finalPhone,
                     email,
+                    createdBy: currentUser.id
+                }
+            });
+            const branch = await tx.branch.create({
+                data: {
+                    name: `${company} - Main Branch`,
+                    address: 'Default Address',
+                    phone: finalPhone,
+                    email,
+                    companyId: newCompany.id,
                     createdBy: currentUser.id
                 }
             });
@@ -257,6 +263,7 @@ const createAdmin = async (req, res) => {
                     name,
                     role: 'ADMIN',
                     branchId: branch.id,
+                    companyId: newCompany.id,
                     createdBy: currentUser.id,
                     isActive: true
                 },
@@ -265,9 +272,7 @@ const createAdmin = async (req, res) => {
                         select: {
                             id: true,
                             name: true,
-                            address: true,
                             phone: true,
-                            email: true
                         }
                     }
                 }
@@ -280,9 +285,7 @@ const createAdmin = async (req, res) => {
                         select: {
                             id: true,
                             name: true,
-                            address: true,
                             phone: true,
-                            email: true
                         }
                     }
                 }
@@ -296,7 +299,6 @@ const createAdmin = async (req, res) => {
             email: admin.email,
             phone: admin.branch?.phone || '',
             company: admin.branch?.name || '',
-            address: admin.branch?.address || '',
             userCount: 0,
             managerCount: 0,
             totalSales: 0,
@@ -352,9 +354,7 @@ const updateAdmin = async (req, res) => {
                     select: {
                         id: true,
                         name: true,
-                        address: true,
                         phone: true,
-                        email: true
                     }
                 }
             }
@@ -365,7 +365,6 @@ const updateAdmin = async (req, res) => {
                 data: {
                     name: updateData.company,
                     phone: updateData.phone || admin.branch?.phone,
-                    email: updateData.email || admin.branch?.email
                 }
             });
         }
@@ -535,7 +534,6 @@ const getAdminUsers = async (req, res) => {
             select: {
                 id: true,
                 name: true,
-                email: true,
                 isActive: true,
                 role: true,
                 createdAt: true,
@@ -546,7 +544,6 @@ const getAdminUsers = async (req, res) => {
         const usersWithStats = users.map(user => ({
             id: user.id,
             name: user.name,
-            email: user.email,
             createdBy: createdBy,
             lastActive: user.updatedAt.toISOString().split('T')[0],
             status: user.isActive ? 'active' : 'inactive',

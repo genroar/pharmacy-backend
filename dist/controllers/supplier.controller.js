@@ -11,20 +11,22 @@ const createSupplierSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     contactPerson: joi_1.default.string().required(),
     phone: joi_1.default.string().required(),
-    email: joi_1.default.string().email().required(),
-    address: joi_1.default.string().required()
+    email: joi_1.default.string().email().allow('').optional(),
+    address: joi_1.default.string().allow('').optional(),
+    manufacturerId: joi_1.default.string().allow('').optional()
 });
 const updateSupplierSchema = joi_1.default.object({
     name: joi_1.default.string(),
     contactPerson: joi_1.default.string(),
     phone: joi_1.default.string(),
-    email: joi_1.default.string().email(),
-    address: joi_1.default.string(),
+    email: joi_1.default.string().email().allow('').optional(),
+    address: joi_1.default.string().allow('').optional(),
+    manufacturerId: joi_1.default.string().allow('').optional(),
     isActive: joi_1.default.boolean()
 });
 const getSuppliers = async (req, res) => {
     try {
-        const { page = 1, limit = 50, search = '', active = true } = req.query;
+        const { page = 1, limit = 50, search = '', active = true, branchId = '', manufacturerId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {};
@@ -45,6 +47,16 @@ const getSuppliers = async (req, res) => {
         if (active === 'true') {
             where.isActive = true;
         }
+        if (branchId) {
+            where.products = {
+                some: {
+                    branchId: branchId
+                }
+            };
+        }
+        if (manufacturerId) {
+            where.manufacturerId = manufacturerId;
+        }
         if (search) {
             where.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
@@ -60,6 +72,13 @@ const getSuppliers = async (req, res) => {
                 skip,
                 take,
                 include: {
+                    manufacturer: {
+                        select: {
+                            id: true,
+                            name: true,
+                            country: true
+                        }
+                    },
                     _count: {
                         select: {
                             products: true
@@ -113,6 +132,13 @@ const getSupplier = async (req, res) => {
         const supplier = await prisma.supplier.findFirst({
             where,
             include: {
+                manufacturer: {
+                    select: {
+                        id: true,
+                        name: true,
+                        country: true
+                    }
+                },
                 _count: {
                     select: {
                         products: true
@@ -142,22 +168,23 @@ const getSupplier = async (req, res) => {
 exports.getSupplier = getSupplier;
 const createSupplier = async (req, res) => {
     try {
+        console.log('🔍 Create supplier request body:', req.body);
         const { error } = createSupplierSchema.validate(req.body);
         if (error) {
+            console.log('🔍 Validation error:', error.details);
             return res.status(400).json({
                 success: false,
                 message: 'Validation error',
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const { name, contactPerson, phone, email, address } = req.body;
+        const { name, contactPerson, phone, email, address, manufacturerId } = req.body;
         const supplier = await prisma.supplier.create({
             data: {
                 name,
                 contactPerson,
                 phone,
-                email,
-                address,
+                manufacturerId: manufacturerId && manufacturerId.trim() !== '' ? manufacturerId : null,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             }
         });
@@ -178,17 +205,37 @@ exports.createSupplier = createSupplier;
 const updateSupplier = async (req, res) => {
     try {
         const { id } = req.params;
+        console.log('🔍 Update supplier request body:', req.body);
         const { error } = updateSupplierSchema.validate(req.body);
         if (error) {
+            console.log('🔍 Update validation error:', error.details);
             return res.status(400).json({
                 success: false,
                 message: 'Validation error',
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const updateData = req.body;
-        const existingSupplier = await prisma.supplier.findUnique({
-            where: { id }
+        const updateData = { ...req.body };
+        if (updateData.manufacturerId && updateData.manufacturerId.trim() === '') {
+            updateData.manufacturerId = null;
+        }
+        const where = { id };
+        if (req.user?.role === 'SUPERADMIN') {
+        }
+        else if (req.user?.role === 'ADMIN') {
+            where.createdBy = req.user.id;
+        }
+        else if (req.user?.createdBy) {
+            where.createdBy = req.user.createdBy;
+        }
+        else if (req.user?.id) {
+            where.createdBy = req.user.id;
+        }
+        else {
+            where.createdBy = 'non-existent-admin-id';
+        }
+        const existingSupplier = await prisma.supplier.findFirst({
+            where
         });
         if (!existingSupplier) {
             return res.status(404).json({
@@ -217,8 +264,24 @@ exports.updateSupplier = updateSupplier;
 const deleteSupplier = async (req, res) => {
     try {
         const { id } = req.params;
-        const supplier = await prisma.supplier.findUnique({
-            where: { id },
+        console.log('🔍 Delete supplier ID:', id);
+        const where = { id };
+        if (req.user?.role === 'SUPERADMIN') {
+        }
+        else if (req.user?.role === 'ADMIN') {
+            where.createdBy = req.user.id;
+        }
+        else if (req.user?.createdBy) {
+            where.createdBy = req.user.createdBy;
+        }
+        else if (req.user?.id) {
+            where.createdBy = req.user.id;
+        }
+        else {
+            where.createdBy = 'non-existent-admin-id';
+        }
+        const supplier = await prisma.supplier.findFirst({
+            where,
             include: {
                 _count: {
                     select: {

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteUser = exports.updateUser = exports.createUser = exports.getUser = exports.getUsers = void 0;
+exports.activateUser = exports.deleteUser = exports.updateUser = exports.createUser = exports.getUser = exports.getUsers = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const client_1 = require("@prisma/client");
 const joi_1 = __importDefault(require("joi"));
@@ -33,7 +33,26 @@ const getUsers = async (req, res) => {
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {};
+        console.log('🔍 getUsers - User context:', {
+            userId: req.user?.id,
+            role: req.user?.role,
+            selectedCompanyId: req.user?.selectedCompanyId,
+            selectedBranchId: req.user?.selectedBranchId,
+            createdBy: req.user?.createdBy
+        });
+        if (req.user?.selectedCompanyId) {
+            where.branch = {
+                companyId: req.user.selectedCompanyId
+            };
+            console.log('🏢 Filtering users by selected company through branch:', req.user.selectedCompanyId);
+        }
+        else {
+            console.log('⚠️ No selectedCompanyId found in user context');
+        }
         if (req.user?.role === 'SUPERADMIN') {
+        }
+        else if (req.user?.selectedCompanyId) {
+            console.log('🏢 Company selected - showing all users from selected company, ignoring createdBy filter');
         }
         else if (req.user?.createdBy) {
             where.createdBy = req.user.createdBy;
@@ -57,6 +76,7 @@ const getUsers = async (req, res) => {
                 { email: { contains: search, mode: 'insensitive' } }
             ];
         }
+        console.log('🔍 getUsers - Final where clause:', JSON.stringify(where, null, 2));
         const [users, total] = await Promise.all([
             prisma.user.findMany({
                 where,
@@ -119,7 +139,6 @@ const getUser = async (req, res) => {
                     select: {
                         id: true,
                         name: true,
-                        address: true
                     }
                 }
             }
@@ -188,12 +207,14 @@ const createUser = async (req, res) => {
         const hashedPassword = await bcryptjs_1.default.hash(userData.password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
         const currentUserId = req.user?.id;
         const currentUserAdminId = req.user?.createdBy;
+        const currentUserCompanyId = req.user?.companyId;
         const user = await prisma.user.create({
             data: {
                 ...userData,
                 password: hashedPassword,
                 createdBy: currentUserAdminId || currentUserId,
-                branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : 'temp'
+                companyId: currentUserCompanyId,
+                branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null
             },
             include: {
                 branch: {
@@ -315,4 +336,45 @@ const deleteUser = async (req, res) => {
     }
 };
 exports.deleteUser = deleteUser;
+const activateUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isActive } = req.body;
+        const user = await prisma.user.findUnique({
+            where: { id }
+        });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const updatedUser = await prisma.user.update({
+            where: { id },
+            data: { isActive },
+            include: {
+                branch: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                }
+            }
+        });
+        const { password, ...userWithoutPassword } = updatedUser;
+        return res.json({
+            success: true,
+            data: userWithoutPassword,
+            message: `User ${isActive ? 'activated' : 'deactivated'} successfully`
+        });
+    }
+    catch (error) {
+        console.error('Activate user error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Internal server error'
+        });
+    }
+};
+exports.activateUser = activateUser;
 //# sourceMappingURL=user.controller.js.map

@@ -12,6 +12,7 @@ const createBranchSchema = joi_1.default.object({
     address: joi_1.default.string().required(),
     phone: joi_1.default.string().required(),
     email: joi_1.default.string().email().required(),
+    companyId: joi_1.default.string().required(),
     managerId: joi_1.default.string().allow(null)
 });
 const updateBranchSchema = joi_1.default.object({
@@ -19,6 +20,7 @@ const updateBranchSchema = joi_1.default.object({
     address: joi_1.default.string(),
     phone: joi_1.default.string(),
     email: joi_1.default.string().email(),
+    companyId: joi_1.default.string(),
     managerId: joi_1.default.string().allow(null),
     isActive: joi_1.default.boolean()
 });
@@ -30,6 +32,10 @@ const getBranches = async (req, res) => {
         const where = {
             isActive: true
         };
+        if (req.user?.selectedCompanyId) {
+            where.companyId = req.user.selectedCompanyId;
+            console.log('🏢 Filtering branches by selected company:', req.user.selectedCompanyId);
+        }
         if (req.user?.role === 'SUPERADMIN') {
         }
         else if (req.user?.role === 'ADMIN') {
@@ -58,6 +64,12 @@ const getBranches = async (req, res) => {
                 skip,
                 take,
                 include: {
+                    company: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
+                    },
                     _count: {
                         select: {
                             users: true,
@@ -98,6 +110,12 @@ const getBranch = async (req, res) => {
         const branch = await prisma.branch.findUnique({
             where: { id },
             include: {
+                company: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                },
                 users: {
                     select: {
                         id: true,
@@ -147,30 +165,51 @@ const createBranch = async (req, res) => {
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const branchData = req.body;
-        let createdBy;
-        if (req.user?.role === 'ADMIN') {
-            createdBy = req.user.id;
+        const { name, address, phone, email, companyId, managerId } = req.body;
+        const company = await prisma.company.findUnique({
+            where: { id: companyId }
+        });
+        if (!company) {
+            return res.status(404).json({
+                success: false,
+                message: 'Company not found'
+            });
         }
-        else {
-            createdBy = req.user?.createdBy || req.user?.id || 'default-admin-id';
+        if (req.user?.role !== 'SUPERADMIN' && company.createdBy !== req.user?.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'Access denied to this company'
+            });
         }
         const existingBranch = await prisma.branch.findFirst({
             where: {
-                name: branchData.name,
-                createdBy: createdBy
+                name: name,
+                companyId: companyId
             }
         });
         if (existingBranch) {
             return res.status(400).json({
                 success: false,
-                message: 'Branch with this name already exists'
+                message: 'Branch with this name already exists in this company'
             });
         }
         const branch = await prisma.branch.create({
             data: {
-                ...branchData,
-                createdBy: createdBy
+                name,
+                address,
+                phone,
+                email,
+                companyId,
+                managerId,
+                createdBy: req.user?.id
+            },
+            include: {
+                company: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                }
             }
         });
         return res.status(201).json({

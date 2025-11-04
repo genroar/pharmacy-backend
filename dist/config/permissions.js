@@ -25,6 +25,9 @@ exports.RESOURCES = {
     PRESCRIPTIONS: 'prescriptions',
     CUSTOMERS: 'customers',
     MEDICATION_HISTORY: 'medication_history',
+    SHIFTS: 'shifts',
+    SCHEDULED_SHIFTS: 'scheduled_shifts',
+    ATTENDANCE: 'attendance',
     COMMISSIONS: 'commissions',
     PAYMENTS: 'payments',
     BILLING: 'billing'
@@ -93,6 +96,9 @@ exports.ROLE_PERMISSIONS = [
             { resource: exports.RESOURCES.REFUNDS, actions: [exports.ACTIONS.APPROVE, exports.ACTIONS.REJECT], conditions: { branchId: true, limit: 1000 } },
             { resource: exports.RESOURCES.CUSTOMERS, actions: [exports.ACTIONS.MANAGE], conditions: { branchId: true } },
             { resource: exports.RESOURCES.COMMISSIONS, actions: [exports.ACTIONS.READ], conditions: { branchId: true } },
+            { resource: exports.RESOURCES.SHIFTS, actions: [exports.ACTIONS.MANAGE], conditions: { branchId: true } },
+            { resource: exports.RESOURCES.SCHEDULED_SHIFTS, actions: [exports.ACTIONS.MANAGE], conditions: { branchId: true } },
+            { resource: exports.RESOURCES.ATTENDANCE, actions: [exports.ACTIONS.MANAGE], conditions: { branchId: true } },
             { resource: exports.RESOURCES.SETTINGS, actions: [exports.ACTIONS.READ], conditions: { branchId: true } },
             { resource: exports.RESOURCES.INTEGRATIONS, actions: [], conditions: {} },
             { resource: exports.RESOURCES.BACKUP, actions: [], conditions: {} }

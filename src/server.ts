@@ -185,6 +185,46 @@ app.get('/ping', (req, res) => {
   });
 });
 
+// Root route - return API info
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'Zapeera Pharmacy Management API',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api',
+      ping: '/ping'
+    },
+    documentation: 'API endpoints are available under /api/*'
+  });
+});
+
+// API root route - return API info
+app.get('/api', (req, res) => {
+  res.status(200).json({
+    message: 'Zapeera Pharmacy Management API',
+    version: '1.0.0',
+    availableEndpoints: [
+      '/api/auth',
+      '/api/users',
+      '/api/products',
+      '/api/sales',
+      '/api/reports',
+      '/api/dashboard',
+      '/api/customers',
+      '/api/inventory',
+      '/api/companies',
+      '/api/branches'
+    ],
+    healthCheck: '/health'
+  });
+});
+
+// Ignore favicon requests (prevent 404 errors)
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -250,13 +290,16 @@ async function startServer(): Promise<void> {
   // Start the server immediately
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
-    console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
+    console.log('🚀 ZAPEERA BACKEND SERVER STARTED');
     console.log('='.repeat(60));
     console.log(`🌐 Server running on port: ${PORT}`);
-    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'production'}`);
     console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
     console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
     console.log('='.repeat(60));
+
+    // Emit ready signal for Electron detection
+    console.log('✅ Server is ready to accept connections');
   });
 
   // Handle server startup errors

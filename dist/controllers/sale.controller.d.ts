@@ -5,4 +5,5 @@ export declare const getSale: (req: Request, res: Response) => Promise<Response<
 export declare const getSaleByReceiptNumber: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const getAvailableReceiptNumbers: (req: Request, res: Response) => Promise<Response<any, Record<string, any>>>;
 export declare const createSale: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
+export declare const updateSale: (req: AuthRequest, res: Response) => Promise<Response<any, Record<string, any>>>;
 //# sourceMappingURL=sale.controller.d.ts.map

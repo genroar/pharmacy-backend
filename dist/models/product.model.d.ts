@@ -1,38 +1,38 @@
 export interface CreateProductData {
     name: string;
     description?: string;
+    formula?: string;
     sku: string;
     categoryId: string;
     categoryName?: string;
     supplierId: string;
     branchId: string;
-    costPrice: number;
-    sellingPrice: number;
-    stock: number;
-    minStock: number;
-    maxStock?: bigint;
-    unitType: string;
-    unitsPerPack?: number;
     barcode?: string;
     requiresPrescription: boolean;
-}
-export interface UpdateProductData {
-    name?: string;
-    description?: string;
-    sku?: string;
-    categoryId?: string;
-    supplierId?: string;
-    branchId?: string;
     costPrice?: number;
     sellingPrice?: number;
     stock?: number;
     minStock?: number;
     maxStock?: bigint;
-    unitType?: string;
     unitsPerPack?: number;
+}
+export interface UpdateProductData {
+    name?: string;
+    description?: string;
+    formula?: string;
+    sku?: string;
+    categoryId?: string;
+    supplierId?: string;
+    branchId?: string;
     barcode?: string;
     requiresPrescription?: boolean;
     isActive?: boolean;
+    costPrice?: number;
+    sellingPrice?: number;
+    stock?: number;
+    minStock?: number;
+    maxStock?: bigint;
+    unitsPerPack?: number;
 }
 export interface StockMovementData {
     productId: string;

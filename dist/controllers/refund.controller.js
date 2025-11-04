@@ -16,6 +16,9 @@ function serializeBigInt(obj) {
     if (typeof obj === 'bigint') {
         return obj.toString();
     }
+    if (obj instanceof Date) {
+        return obj.toISOString();
+    }
     if (obj && typeof obj === 'object' && obj.constructor && obj.constructor.name === 'Decimal') {
         return obj.toString();
     }
@@ -26,6 +29,9 @@ function serializeBigInt(obj) {
         return obj.map(serializeBigInt);
     }
     if (typeof obj === 'object') {
+        if (obj.constructor && obj.constructor.name === 'Date') {
+            return new Date(obj).toISOString();
+        }
         const serialized = {};
         for (const key in obj) {
             if (obj.hasOwnProperty(key)) {
@@ -102,7 +108,7 @@ const createRefund = async (req, res) => {
                     console.log('❌ Product not found:', item.productId);
                     throw new Error(`Product with ID ${item.productId} not found`);
                 }
-                console.log('🔍 DEBUG - Found product:', product.name, 'Current stock:', product.stock);
+                console.log('🔍 DEBUG - Found product:', product.name);
                 const refundItem = await tx.refundItem.create({
                     data: {
                         refundId: refund.id,
@@ -113,15 +119,7 @@ const createRefund = async (req, res) => {
                         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
                     }
                 });
-                const updatedProduct = await tx.product.update({
-                    where: { id: item.productId },
-                    data: {
-                        stock: {
-                            increment: item.quantity
-                        }
-                    }
-                });
-                console.log('🔍 DEBUG - Stock updated for', product.name, 'from', product.stock, 'to', updatedProduct.stock);
+                console.log('🔍 DEBUG - Stock return processed for', product.name);
                 await tx.stockMovement.create({
                     data: {
                         productId: item.productId,

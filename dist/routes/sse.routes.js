@@ -156,9 +156,20 @@ const notifyProductChange = (createdBy, action, product) => {
 };
 exports.notifyProductChange = notifyProductChange;
 const notifySaleChange = (createdBy, action, sale) => {
+    const notificationSale = {
+        id: sale.id?.toString(),
+        totalAmount: typeof sale.totalAmount === 'bigint' ? Number(sale.totalAmount) : sale.totalAmount,
+        discountPercentage: sale.discountPercentage,
+        discountAmount: typeof sale.discountAmount === 'bigint' ? Number(sale.discountAmount) : sale.discountAmount,
+        paymentMethod: sale.paymentMethod,
+        status: sale.status,
+        customerName: sale.customer?.name || 'Walk-in Customer',
+        createdAt: sale.createdAt?.toISOString?.() || sale.createdAt,
+        updatedAt: sale.updatedAt?.toISOString?.() || sale.updatedAt
+    };
     (0, exports.notifyAdminGroup)(createdBy, 'sale_change', {
         action,
-        sale,
+        sale: notificationSale,
         message: `Sale ${action}: ${sale.id}`
     });
 };

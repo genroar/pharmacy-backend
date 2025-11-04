@@ -13,6 +13,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const client_1 = require("@prisma/client");
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const user_routes_1 = __importDefault(require("./routes/user.routes"));
+const company_routes_1 = __importDefault(require("./routes/company.routes"));
 const branch_routes_1 = __importDefault(require("./routes/branch.routes"));
 const product_routes_1 = __importDefault(require("./routes/product.routes"));
 const customer_routes_1 = __importDefault(require("./routes/customer.routes"));
@@ -22,13 +23,19 @@ const dashboard_routes_1 = __importDefault(require("./routes/dashboard.routes"))
 const admin_routes_1 = __importDefault(require("./routes/admin.routes"));
 const category_routes_1 = __importDefault(require("./routes/category.routes"));
 const supplier_routes_1 = __importDefault(require("./routes/supplier.routes"));
+const manufacturer_routes_1 = __importDefault(require("./routes/manufacturer.routes"));
+const shelf_routes_1 = __importDefault(require("./routes/shelf.routes"));
 const employee_routes_1 = __importDefault(require("./routes/employee.routes"));
 const attendance_routes_1 = __importDefault(require("./routes/attendance.routes"));
 const shift_routes_1 = __importDefault(require("./routes/shift.routes"));
+const scheduledShift_routes_1 = __importDefault(require("./routes/scheduledShift.routes"));
 const commission_routes_1 = __importDefault(require("./routes/commission.routes"));
 const role_routes_1 = __importDefault(require("./routes/role.routes"));
 const refund_routes_1 = __importDefault(require("./routes/refund.routes"));
 const subscription_routes_1 = __importDefault(require("./routes/subscription.routes"));
+const batch_routes_1 = __importDefault(require("./routes/batch.routes"));
+const purchase_routes_1 = __importDefault(require("./routes/purchase.routes"));
+const inventory_routes_1 = __importDefault(require("./routes/inventory.routes"));
 const sse_routes_1 = __importDefault(require("./routes/sse.routes"));
 const settings_routes_1 = __importDefault(require("./routes/settings.routes"));
 const error_middleware_1 = require("./middleware/error.middleware");
@@ -91,7 +98,7 @@ const corsOptions = {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Company-ID', 'X-Branch-ID'],
     optionsSuccessStatus: 200
 };
 app.use((0, cors_1.default)(corsOptions));
@@ -145,8 +152,43 @@ app.get('/ping', (req, res) => {
         environment: process.env.NODE_ENV
     });
 });
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'Zapeera Pharmacy Management API',
+        version: '1.0.0',
+        endpoints: {
+            health: '/health',
+            api: '/api',
+            ping: '/ping'
+        },
+        documentation: 'API endpoints are available under /api/*'
+    });
+});
+app.get('/api', (req, res) => {
+    res.status(200).json({
+        message: 'Zapeera Pharmacy Management API',
+        version: '1.0.0',
+        availableEndpoints: [
+            '/api/auth',
+            '/api/users',
+            '/api/products',
+            '/api/sales',
+            '/api/reports',
+            '/api/dashboard',
+            '/api/customers',
+            '/api/inventory',
+            '/api/companies',
+            '/api/branches'
+        ],
+        healthCheck: '/health'
+    });
+});
+app.get('/favicon.ico', (req, res) => {
+    res.status(204).end();
+});
 app.use('/api/auth', auth_routes_1.default);
 app.use('/api/users', user_routes_1.default);
+app.use('/api/companies', company_routes_1.default);
 app.use('/api/branches', branch_routes_1.default);
 app.use('/api/products', product_routes_1.default);
 app.use('/api/customers', customer_routes_1.default);
@@ -156,13 +198,19 @@ app.use('/api/dashboard', dashboard_routes_1.default);
 app.use('/api/admin', admin_routes_1.default);
 app.use('/api/categories', category_routes_1.default);
 app.use('/api/suppliers', supplier_routes_1.default);
+app.use('/api/manufacturers', manufacturer_routes_1.default);
+app.use('/api/shelves', shelf_routes_1.default);
 app.use('/api/employees', employee_routes_1.default);
 app.use('/api/attendance', attendance_routes_1.default);
 app.use('/api/shifts', shift_routes_1.default);
+app.use('/api/scheduled-shifts', scheduledShift_routes_1.default);
 app.use('/api/commissions', commission_routes_1.default);
 app.use('/api/roles', role_routes_1.default);
 app.use('/api/refunds', refund_routes_1.default);
 app.use('/api/subscription', subscription_routes_1.default);
+app.use('/api/batches', batch_routes_1.default);
+app.use('/api/purchases', purchase_routes_1.default);
+app.use('/api/inventory', inventory_routes_1.default);
 app.use('/api/sse', sse_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
 app.use(notFound_middleware_1.notFound);
@@ -191,13 +239,14 @@ const PORT = (() => {
 async function startServer() {
     const server = app.listen(PORT, '0.0.0.0', () => {
         console.log('='.repeat(60));
-        console.log('🚀 MEDIBILL PULSE BACKEND SERVER STARTED');
+        console.log('🚀 ZAPEERA BACKEND SERVER STARTED');
         console.log('='.repeat(60));
         console.log(`🌐 Server running on port: ${PORT}`);
-        console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+        console.log(`📊 Environment: ${process.env.NODE_ENV || 'production'}`);
         console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
         console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
         console.log('='.repeat(60));
+        console.log('✅ Server is ready to accept connections');
     });
     server.on('error', (error) => {
         if (error.code === 'EADDRINUSE') {

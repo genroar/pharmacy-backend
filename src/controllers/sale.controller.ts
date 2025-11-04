@@ -2,7 +2,7 @@
 
 
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, PaymentStatus } from '@prisma/client';
 import { CreateSaleData, SaleResponse } from '../models/sale.model';
 import { AuthRequest, buildBranchWhereClause } from '../middleware/auth.middleware';
 import { notifySaleChange } from '../routes/sse.routes';
@@ -14,17 +14,21 @@ const prisma = new PrismaClient();
 const createSaleSchema = Joi.object({
   customerId: Joi.string().allow(null),
   branchId: Joi.string().required(),
-  items: Joi.array().items(
-    Joi.object({
-      productId: Joi.string().required(),
-      quantity: Joi.number().min(1).required(),
-      unitPrice: Joi.number().positive().required(),
-      batchId: Joi.string().allow(null, ''), // Link to specific batch
-      batchNumber: Joi.string().allow(''), // Keep for backward compatibility
-      expiryDate: Joi.string().allow('')
-    })
-  ).min(1).required(),
+      items: Joi.array().items(
+        Joi.object({
+          productId: Joi.string().required(),
+          quantity: Joi.number().min(1).required(),
+          unitPrice: Joi.number().positive().required(),
+          batchId: Joi.string().allow(null, ''), // Link to specific batch
+          batchNumber: Joi.string().allow(''), // Keep for backward compatibility
+          expiryDate: Joi.string().allow(''),
+          discountPercentage: Joi.number().min(0).max(100).optional(), // Item-level discount
+          discountAmount: Joi.number().min(0).optional(), // Item-level discount amount
+          totalPrice: Joi.number().min(0).optional() // Item total after discount
+        })
+      ).min(1).required(),
   paymentMethod: Joi.string().valid('CASH', 'CARD', 'MOBILE', 'BANK_TRANSFER').required(),
+  paymentStatus: Joi.string().valid('PENDING', 'COMPLETED', 'FAILED', 'REFUNDED').optional(),
   discountAmount: Joi.number().min(0).default(0),
   discountPercentage: Joi.number().min(0).max(100).default(0),
   saleDate: Joi.date().optional()
@@ -368,9 +372,30 @@ export const createSale = async (req: AuthRequest, res: Response) => {
       }
     }
 
-    // Calculate totals
-    const subtotal = saleData.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
-    const discountAmount = saleData.discountAmount || 0;
+    // Calculate totals with item-level discounts
+    // For each item: calculate subtotal, apply item discount, then sum
+    const itemTotals = saleData.items.map(item => {
+      // If totalPrice is provided (already includes item discount), use it directly
+      if (item.totalPrice !== undefined && item.totalPrice >= 0) {
+        return item.totalPrice;
+      }
+
+      // Otherwise, calculate from unitPrice and discounts
+      const itemSubtotal = item.quantity * item.unitPrice;
+      let itemDiscountAmount = 0;
+
+      // Calculate item discount if provided
+      if (item.discountPercentage && item.discountPercentage > 0) {
+        itemDiscountAmount = itemSubtotal * (item.discountPercentage / 100);
+      } else if (item.discountAmount && item.discountAmount > 0) {
+        itemDiscountAmount = item.discountAmount;
+      }
+
+      return itemSubtotal - itemDiscountAmount;
+    });
+
+    const subtotal = itemTotals.reduce((sum, total) => sum + total, 0);
+    const discountAmount = saleData.discountAmount || 0; // Global discount
     const subtotalAfterDiscount = subtotal - discountAmount;
     const taxAmount = subtotalAfterDiscount * (taxRate / 100); // Tax on discounted amount
     const totalAmount = subtotalAfterDiscount + taxAmount;
@@ -402,6 +427,10 @@ export const createSale = async (req: AuthRequest, res: Response) => {
         console.log('🏢 Using provided branch context for sale:', { targetCompanyId, targetBranchId });
       }
 
+      // Determine payment status and sale status
+      const paymentStatus: PaymentStatus = saleData.paymentStatus || 'COMPLETED';
+      const saleStatus = paymentStatus === 'COMPLETED' ? 'COMPLETED' : 'PENDING';
+
       // Create sale
       const sale = await tx.sale.create({
         data: {
@@ -416,8 +445,8 @@ export const createSale = async (req: AuthRequest, res: Response) => {
           discountPercentage: saleData.discountPercentage || 0,
           totalAmount,
           paymentMethod: saleData.paymentMethod,
-          paymentStatus: 'COMPLETED',
-          status: 'COMPLETED',
+          paymentStatus: paymentStatus,
+          status: saleStatus,
           saleDate: saleData.saleDate ? new Date(saleData.saleDate) : undefined
         }
       });
@@ -655,15 +684,23 @@ export const createSale = async (req: AuthRequest, res: Response) => {
 export const updateSale = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const { discountPercentage, saleDate, notes } = req.body;
+    const { discountPercentage, saleDate, notes, paymentStatus } = req.body;
 
-    console.log('Update sale request:', { id, discountPercentage, saleDate, notes });
+    console.log('Update sale request:', { id, discountPercentage, saleDate, notes, paymentStatus });
 
     // Validate input
     if (discountPercentage !== undefined && (discountPercentage < 0 || discountPercentage > 100)) {
       return res.status(400).json({
         success: false,
         message: 'Discount percentage must be between 0 and 100'
+      });
+    }
+
+    // Validate payment status if provided
+    if (paymentStatus !== undefined && !['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(paymentStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid payment status. Must be PENDING, COMPLETED, FAILED, or REFUNDED'
       });
     }
 
@@ -711,6 +748,12 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
       newTotalAmount = subtotalAfterDiscount + newTaxAmount;
     }
 
+    // Determine new payment status and sale status
+    const newPaymentStatus: PaymentStatus = paymentStatus || existingSale.paymentStatus;
+    const newSaleStatus = newPaymentStatus === 'COMPLETED' ? 'COMPLETED' :
+                          newPaymentStatus === 'PENDING' ? 'PENDING' :
+                          existingSale.status;
+
     // Update the sale
     const updatedSale = await prisma.sale.update({
       where: { id },
@@ -719,6 +762,8 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
         discountAmount: newDiscountAmount,
         taxAmount: newTaxAmount,
         totalAmount: newTotalAmount,
+        paymentStatus: newPaymentStatus,
+        status: newSaleStatus,
         saleDate: saleDate ? new Date(saleDate) : existingSale.saleDate,
         updatedAt: new Date()
       },

@@ -119,7 +119,6 @@ const getSalesReport = async (req, res) => {
                 select: {
                     id: true,
                     name: true,
-                    unitType: true,
                     category: {
                         select: {
                             name: true
@@ -267,16 +266,8 @@ const getInventoryReport = async (req, res) => {
         if (branchId) {
             where.branchId = branchId;
         }
-        if (lowStock === 'true') {
-            where.stock = {
-                lte: prisma.product.fields.minStock
-            };
-        }
         const inventorySummary = await prisma.product.aggregate({
             where,
-            _sum: {
-                stock: true
-            },
             _count: {
                 id: true
             }
@@ -284,9 +275,6 @@ const getInventoryReport = async (req, res) => {
         const productsByCategory = await prisma.product.groupBy({
             by: ['categoryId'],
             where,
-            _sum: {
-                stock: true
-            },
             _count: {
                 id: true
             }
@@ -311,15 +299,15 @@ const getInventoryReport = async (req, res) => {
       LEFT JOIN suppliers s ON p."supplierId" = s.id
       WHERE p."isActive" = true
       ${branchId ? client_1.Prisma.sql `AND p."branchId" = ${branchId}` : client_1.Prisma.empty}
-      AND p.stock <= p."minStock"
-      ORDER BY p.stock ASC
+      -- Stock checking is now handled through batches
+      ORDER BY p."minStock" ASC
     `;
         return res.json({
             success: true,
             data: {
                 summary: {
-                    totalProducts: inventorySummary._count.id,
-                    totalStock: inventorySummary._sum.stock || 0,
+                    totalProducts: inventorySummary._count?.id || 0,
+                    totalStock: 0,
                     lowStockCount: Array.isArray(lowStockProducts) ? lowStockProducts.length : 0
                 },
                 productsByCategory: categoriesWithDetails,
@@ -473,9 +461,6 @@ const getProductPerformanceReport = async (req, res) => {
                 select: {
                     id: true,
                     name: true,
-                    unitType: true,
-                    sellingPrice: true,
-                    stock: true,
                     category: {
                         select: {
                             name: true
@@ -602,9 +587,6 @@ const getTopSellingProducts = async (req, res) => {
                 select: {
                     id: true,
                     name: true,
-                    unitType: true,
-                    sellingPrice: true,
-                    stock: true,
                     category: {
                         select: {
                             name: true

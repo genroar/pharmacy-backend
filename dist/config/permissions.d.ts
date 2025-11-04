@@ -32,6 +32,9 @@ export declare const RESOURCES: {
     readonly PRESCRIPTIONS: "prescriptions";
     readonly CUSTOMERS: "customers";
     readonly MEDICATION_HISTORY: "medication_history";
+    readonly SHIFTS: "shifts";
+    readonly SCHEDULED_SHIFTS: "scheduled_shifts";
+    readonly ATTENDANCE: "attendance";
     readonly COMMISSIONS: "commissions";
     readonly PAYMENTS: "payments";
     readonly BILLING: "billing";

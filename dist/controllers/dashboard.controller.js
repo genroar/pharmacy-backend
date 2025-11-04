@@ -50,15 +50,31 @@ const getDashboardStats = async (req, res) => {
                 isActive: true
             }
         });
-        const lowStockProducts = await prisma.product.count({
+        const allProducts = await prisma.product.findMany({
             where: {
                 ...where,
-                isActive: true,
-                stock: {
-                    lte: prisma.product.fields.minStock
+                isActive: true
+            },
+            include: {
+                batches: {
+                    where: {
+                        isActive: true,
+                        quantity: { gt: 0 },
+                        OR: [
+                            { expireDate: null },
+                            { expireDate: { gt: new Date() } }
+                        ]
+                    },
+                    select: {
+                        quantity: true
+                    }
                 }
             }
         });
+        const lowStockProducts = allProducts.filter(product => {
+            const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+            return totalStock <= product.minStock;
+        }).length;
         const totalCustomers = await prisma.customer.count({
             where: {
                 ...where,
@@ -299,17 +315,18 @@ const getAdminDashboardStats = async (req, res) => {
         });
         const lowStockProducts = await prisma.product.findMany({
             where: {
-                isActive: true,
-                stock: {
-                    lte: prisma.product.fields.minStock
-                }
+                isActive: true
             },
-            select: {
-                id: true,
-                name: true,
-                stock: true,
-                minStock: true,
-                unitType: true,
+            include: {
+                batches: {
+                    where: {
+                        isActive: true,
+                        quantity: { gt: 0 }
+                    },
+                    select: {
+                        quantity: true
+                    }
+                },
                 branch: {
                     select: {
                         name: true
@@ -318,6 +335,16 @@ const getAdminDashboardStats = async (req, res) => {
             },
             take: 10
         });
+        const filteredLowStockProducts = lowStockProducts.filter(product => {
+            const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+            return totalStock <= product.minStock;
+        }).map(product => ({
+            id: product.id,
+            name: product.name,
+            stock: product.batches.reduce((sum, batch) => sum + batch.quantity, 0),
+            minStock: product.minStock,
+            branch: product.branch
+        }));
         const branchPerformance = await prisma.branch.findMany({
             where: {
                 isActive: true
@@ -380,7 +407,7 @@ const getAdminDashboardStats = async (req, res) => {
                 totalUsers,
                 totalBranches,
                 recentSales,
-                lowStockProducts,
+                lowStockProducts: filteredLowStockProducts,
                 branchPerformance: branchStats,
                 recentUsers: recentUsers.map(user => ({
                     id: user.id,
@@ -435,11 +462,17 @@ const getTopSellingProducts = async (req, res) => {
                     in: productIds
                 }
             },
-            select: {
-                id: true,
-                name: true,
-                sellingPrice: true,
-                unitType: true,
+            include: {
+                batches: {
+                    where: {
+                        isActive: true,
+                        quantity: { gt: 0 }
+                    },
+                    select: {
+                        sellingPrice: true
+                    },
+                    take: 1
+                },
                 category: {
                     select: {
                         name: true
@@ -454,7 +487,7 @@ const getTopSellingProducts = async (req, res) => {
                 productId: item.productId,
                 product: product ? {
                     ...product,
-                    price: product.sellingPrice
+                    price: product.batches[0]?.sellingPrice || 0
                 } : null,
                 totalQuantity: item._sum.quantity || 0,
                 totalRevenue: item._sum.totalPrice || 0,

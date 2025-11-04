@@ -25,7 +25,7 @@ const updateCustomerSchema = joi_1.default.object({
 });
 const getCustomers = async (req, res) => {
     try {
-        const { page = 1, limit = 10, search = '', branchId = '', vip = false } = req.query;
+        const { page = 1, limit = 10, search = '', branchId = '', vip = false, createdByRole = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {
@@ -50,8 +50,38 @@ const getCustomers = async (req, res) => {
                 { email: { contains: search, mode: 'insensitive' } }
             ];
         }
+        if (createdByRole && typeof createdByRole === 'string' && createdByRole.trim() !== '') {
+            const usersWithRole = await prisma.user.findMany({
+                where: { role: createdByRole, isActive: true },
+                select: { id: true }
+            });
+            const userIds = usersWithRole.map(u => u.id);
+            if (userIds.length > 0) {
+                const baseCreatedBy = req.user?.createdBy || req.user?.id;
+                if (baseCreatedBy) {
+                    where.AND = [
+                        { createdBy: baseCreatedBy },
+                        { createdBy: { in: userIds } }
+                    ];
+                    delete where.createdBy;
+                }
+                else {
+                    where.createdBy = { in: userIds };
+                }
+            }
+            else {
+                return res.json({
+                    success: true,
+                    data: {
+                        customers: [],
+                        pagination: { page: Number(page), limit: Number(limit), total: 0, pages: 0 }
+                    }
+                });
+            }
+        }
         console.log('Customer query where clause:', where);
         console.log('Customer query pagination:', { skip, take });
+        console.log('Filter by creator role:', createdByRole);
         const [customers, total] = await Promise.all([
             prisma.customer.findMany({
                 where,
@@ -131,7 +161,6 @@ const getCustomer = async (req, res) => {
                                     select: {
                                         id: true,
                                         name: true,
-                                        unitType: true
                                     }
                                 }
                             }
@@ -189,9 +218,20 @@ const createCustomer = async (req, res) => {
                 message: 'Customer already exists'
             });
         }
+        const branch = await prisma.branch.findUnique({
+            where: { id: customerData.branchId },
+            select: { companyId: true }
+        });
+        if (!branch) {
+            return res.status(400).json({
+                success: false,
+                message: 'Branch not found'
+            });
+        }
         const customer = await prisma.customer.create({
             data: {
                 ...customerData,
+                companyId: branch.companyId,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             },
             include: {
@@ -339,8 +379,7 @@ const getCustomerPurchaseHistory = async (req, res) => {
                             product: {
                                 select: {
                                     id: true,
-                                    name: true,
-                                    unitType: true
+                                    name: true
                                 }
                             }
                         }

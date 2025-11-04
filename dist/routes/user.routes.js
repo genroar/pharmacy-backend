@@ -10,5 +10,6 @@ router.get('/:id', (0, auth_middleware_1.authorize)('MANAGER', 'ADMIN', 'SUPERAD
 router.post('/', (0, auth_middleware_1.authorize)('MANAGER', 'ADMIN', 'SUPERADMIN'), user_controller_1.createUser);
 router.put('/:id', (0, auth_middleware_1.authorize)('MANAGER', 'ADMIN', 'SUPERADMIN'), user_controller_1.updateUser);
 router.delete('/:id', (0, auth_middleware_1.authorize)('MANAGER', 'ADMIN', 'SUPERADMIN'), user_controller_1.deleteUser);
+router.patch('/:id/activate', (0, auth_middleware_1.authorize)('SUPERADMIN'), user_controller_1.activateUser);
 exports.default = router;
 //# sourceMappingURL=user.routes.js.map

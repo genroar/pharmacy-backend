@@ -16,10 +16,16 @@ function serializeBigInt(obj) {
     if (typeof obj === 'bigint') {
         return obj.toString();
     }
+    if (obj instanceof Date) {
+        return obj.toISOString();
+    }
     if (Array.isArray(obj)) {
         return obj.map(serializeBigInt);
     }
     if (typeof obj === 'object') {
+        if (obj.constructor && obj.constructor.name === 'Date') {
+            return new Date(obj).toISOString();
+        }
         const serialized = {};
         for (const key in obj) {
             if (obj.hasOwnProperty(key)) {
@@ -33,43 +39,37 @@ function serializeBigInt(obj) {
 const createProductSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     description: joi_1.default.string().allow(''),
+    formula: joi_1.default.string().allow(''),
     sku: joi_1.default.string().allow(''),
     categoryId: joi_1.default.string().required(),
     categoryName: joi_1.default.string().allow(''),
     supplierId: joi_1.default.string().required(),
     branchId: joi_1.default.string().required(),
-    costPrice: joi_1.default.number().positive().required(),
-    sellingPrice: joi_1.default.number().positive().required(),
-    stock: joi_1.default.number().min(0).required(),
-    minStock: joi_1.default.number().min(0).required(),
-    maxStock: joi_1.default.number().min(0).allow(null),
-    unitType: joi_1.default.string().required(),
-    unitsPerPack: joi_1.default.number().min(1).default(1),
     barcode: joi_1.default.string().allow(''),
     requiresPrescription: joi_1.default.boolean().default(false),
-    isActive: joi_1.default.boolean().default(true)
+    isActive: joi_1.default.boolean().default(true),
+    minStock: joi_1.default.number().min(0).default(1).optional(),
+    maxStock: joi_1.default.number().min(0).allow(null).optional(),
+    unitsPerPack: joi_1.default.number().min(1).default(1).optional()
 });
 const updateProductSchema = joi_1.default.object({
     name: joi_1.default.string().allow(''),
     description: joi_1.default.string().allow(''),
+    formula: joi_1.default.string().allow(''),
     sku: joi_1.default.string().allow(''),
     categoryId: joi_1.default.string().allow(''),
     supplierId: joi_1.default.string().allow(''),
     branchId: joi_1.default.string().allow(''),
-    costPrice: joi_1.default.number().positive().allow(0),
-    sellingPrice: joi_1.default.number().positive().allow(0),
-    stock: joi_1.default.number().min(0),
-    minStock: joi_1.default.number().min(0),
-    maxStock: joi_1.default.number().min(0).allow(null),
-    unitType: joi_1.default.string().allow(''),
-    unitsPerPack: joi_1.default.number().min(1).default(1),
     barcode: joi_1.default.string().allow(''),
     requiresPrescription: joi_1.default.boolean(),
-    isActive: joi_1.default.boolean()
+    isActive: joi_1.default.boolean(),
+    minStock: joi_1.default.number().min(0).optional(),
+    maxStock: joi_1.default.number().min(0).allow(null).optional(),
+    unitsPerPack: joi_1.default.number().min(1).default(1).optional()
 });
 const getProducts = async (req, res) => {
     try {
-        const { page = 1, limit = 10, search = '', category = '', branchId = '', lowStock = false, includeInactive = false } = req.query;
+        const { page = 1, limit = 10, search = '', category = '', categoryType = '', branchId = '', lowStock = false, includeInactive = false } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -82,15 +82,17 @@ const getProducts = async (req, res) => {
         if (category) {
             where.categoryId = category;
         }
+        if (categoryType) {
+            where.category = {
+                type: String(categoryType).toUpperCase()
+            };
+        }
         if (search) {
             where.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
                 { barcode: { contains: search } },
                 { description: { contains: search, mode: 'insensitive' } }
             ];
-        }
-        if (lowStock === 'true') {
-            where.stock = { lte: prisma.product.fields.minStock };
         }
         const [products, total] = await Promise.all([
             prisma.product.findMany({
@@ -105,21 +107,55 @@ const getProducts = async (req, res) => {
                             id: true,
                             name: true
                         }
+                    },
+                    batches: {
+                        where: {
+                            isActive: true,
+                            quantity: { gt: 0 },
+                            OR: [
+                                { expireDate: null },
+                                { expireDate: { gt: new Date() } }
+                            ]
+                        },
+                        select: {
+                            id: true,
+                            batchNo: true,
+                            quantity: true,
+                            purchasePrice: true,
+                            sellingPrice: true,
+                            expireDate: true
+                        },
+                        orderBy: { expireDate: 'asc' }
                     }
                 },
                 orderBy: { createdAt: 'desc' }
             }),
             prisma.product.count({ where })
         ]);
+        const productsWithBatchData = products.map(product => {
+            const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+            const currentBatch = product.batches.find(batch => batch.quantity > 0) || product.batches[0];
+            const currentPrice = currentBatch?.sellingPrice || 0;
+            return {
+                ...product,
+                stock: totalStock,
+                price: currentPrice,
+                currentBatch: currentBatch
+            };
+        });
+        let filteredProducts = productsWithBatchData;
+        if (lowStock === 'true') {
+            filteredProducts = productsWithBatchData.filter(product => product.stock <= product.minStock);
+        }
         return res.json({
             success: true,
             data: {
-                products: serializeBigInt(products),
+                products: serializeBigInt(filteredProducts),
                 pagination: {
                     page: Number(page),
                     limit: Number(limit),
-                    total,
-                    pages: Math.ceil(total / Number(limit))
+                    total: lowStock === 'true' ? filteredProducts.length : total,
+                    pages: Math.ceil((lowStock === 'true' ? filteredProducts.length : total) / Number(limit))
                 }
             }
         });
@@ -207,8 +243,6 @@ const createProduct = async (req, res) => {
                         name: 'Default Supplier',
                         contactPerson: 'System Generated',
                         phone: '+92 300 0000000',
-                        email: process.env.SYSTEM_EMAIL || 'system@default.com',
-                        address: 'Auto-created for imports',
                         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                         isActive: true
                     }
@@ -230,24 +264,44 @@ const createProduct = async (req, res) => {
                 });
             }
         }
+        let targetCompanyId;
+        let targetBranchId;
+        if (req.user?.selectedCompanyId && req.user?.selectedBranchId) {
+            targetCompanyId = req.user.selectedCompanyId;
+            targetBranchId = req.user.selectedBranchId;
+            console.log('🏢 Using selected company/branch context:', { targetCompanyId, targetBranchId });
+        }
+        else {
+            const branch = await prisma.branch.findUnique({
+                where: { id: productData.branchId },
+                select: { companyId: true }
+            });
+            if (!branch) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Branch not found'
+                });
+            }
+            targetCompanyId = branch.companyId;
+            targetBranchId = productData.branchId;
+            console.log('🏢 Using provided branch context:', { targetCompanyId, targetBranchId });
+        }
         const product = await prisma.product.create({
             data: {
                 name: productData.name,
                 description: productData.description,
+                formula: productData.formula,
                 sku: productData.sku,
                 categoryId: productData.categoryId,
                 supplierId: productData.supplierId,
-                branchId: productData.branchId,
+                branchId: targetBranchId,
+                companyId: targetCompanyId,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-                costPrice: productData.costPrice,
-                sellingPrice: productData.sellingPrice,
-                stock: productData.stock,
-                minStock: productData.minStock,
-                maxStock: productData.maxStock,
-                unitType: productData.unitType,
-                unitsPerPack: productData.unitsPerPack,
                 barcode: productData.barcode,
-                requiresPrescription: productData.requiresPrescription
+                requiresPrescription: productData.requiresPrescription,
+                minStock: productData.minStock || 1,
+                maxStock: productData.maxStock || 1000,
+                unitsPerPack: productData.unitsPerPack || 1
             },
             include: {
                 category: true,
@@ -258,15 +312,6 @@ const createProduct = async (req, res) => {
                         name: true
                     }
                 }
-            }
-        });
-        await prisma.stockMovement.create({
-            data: {
-                productId: product.id,
-                type: 'IN',
-                quantity: productData.stock,
-                reason: 'Initial stock',
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             }
         });
         const createdBy = req.user?.createdBy || req.user?.id;
@@ -332,12 +377,8 @@ const updateProduct = async (req, res) => {
                 categoryId: updateData.categoryId,
                 supplierId: updateData.supplierId,
                 branchId: updateData.branchId,
-                costPrice: updateData.costPrice,
-                sellingPrice: updateData.sellingPrice,
-                stock: updateData.stock,
                 minStock: updateData.minStock,
                 maxStock: updateData.maxStock,
-                unitType: updateData.unitType,
                 unitsPerPack: updateData.unitsPerPack,
                 barcode: updateData.barcode,
                 requiresPrescription: updateData.requiresPrescription,
@@ -442,59 +483,9 @@ const updateStock = async (req, res) => {
                 message: 'Product not found'
             });
         }
-        let newStock = product.stock;
-        if (type === 'IN') {
-            newStock += quantity;
-        }
-        else if (type === 'OUT') {
-            newStock -= quantity;
-            if (newStock < 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Insufficient stock'
-                });
-            }
-        }
-        else if (type === 'ADJUSTMENT') {
-            newStock = quantity;
-        }
-        const updatedProduct = await prisma.product.update({
-            where: { id },
-            data: { stock: newStock },
-            include: {
-                category: true,
-                supplier: true,
-                branch: {
-                    select: {
-                        id: true,
-                        name: true
-                    }
-                }
-            }
-        });
-        await prisma.stockMovement.create({
-            data: {
-                productId: id,
-                type,
-                quantity,
-                reason,
-                reference,
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-            }
-        });
-        const createdBy = req.user?.createdBy || req.user?.id;
-        if (createdBy) {
-            (0, sse_routes_1.notifyInventoryChange)(createdBy, 'stock_updated', {
-                productId: updatedProduct.id,
-                productName: updatedProduct.name,
-                newStock: updatedProduct.stock,
-                changeType: type,
-                quantity: quantity
-            });
-        }
-        return res.json({
-            success: true,
-            data: serializeBigInt(updatedProduct)
+        return res.status(400).json({
+            success: false,
+            message: 'Stock adjustments are now managed through batches. Please use batch management instead.'
         });
     }
     catch (error) {
@@ -541,23 +532,11 @@ const bulkImportProducts = async (req, res) => {
                 if (!productData.name || productData.name.trim() === '') {
                     productData.name = `Product_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
                 }
-                if (!productData.sellingPrice || productData.sellingPrice <= 0) {
-                    productData.sellingPrice = 100;
-                }
-                if (productData.stock === undefined || productData.stock === null || productData.stock < 0) {
-                    productData.stock = 0;
-                }
-                if (!productData.costPrice || productData.costPrice <= 0) {
-                    productData.costPrice = productData.sellingPrice * 0.7;
-                }
                 if (!productData.minStock || productData.minStock < 0) {
                     productData.minStock = 10;
                 }
                 if (!productData.maxStock || productData.maxStock < 0) {
                     productData.maxStock = null;
-                }
-                if (!productData.unitType || productData.unitType.trim() === '') {
-                    productData.unitType = 'tablets';
                 }
                 if (!productData.unitsPerPack || productData.unitsPerPack <= 0) {
                     productData.unitsPerPack = 1;
@@ -608,8 +587,6 @@ const bulkImportProducts = async (req, res) => {
                                 name: 'Default Supplier',
                                 contactPerson: 'System Generated',
                                 phone: '+92 300 0000000',
-                                email: process.env.SYSTEM_EMAIL || 'system@default.com',
-                                address: 'Auto-created for imports',
                                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                                 isActive: true
                             }
@@ -628,12 +605,24 @@ const bulkImportProducts = async (req, res) => {
                         productData.branchId = availableBranch.id;
                     }
                     else {
+                        const defaultCompany = await prisma.company.create({
+                            data: {
+                                name: 'Default Company',
+                                description: 'Auto-created for imports',
+                                address: 'Auto-created for imports',
+                                phone: '+92 300 0000000',
+                                email: process.env.COMPANY_EMAIL || 'default@company.com',
+                                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
+                                isActive: true
+                            }
+                        });
                         const defaultBranch = await prisma.branch.create({
                             data: {
                                 name: 'Default Branch',
                                 address: 'Auto-created for imports',
                                 phone: '+92 300 0000000',
                                 email: process.env.BRANCH_EMAIL || 'default@branch.com',
+                                companyId: defaultCompany.id,
                                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
                                 isActive: true
                             }
@@ -666,11 +655,7 @@ const bulkImportProducts = async (req, res) => {
                         const updatedProduct = await prisma.product.update({
                             where: { id: existingProduct.id },
                             data: {
-                                stock: existingProduct.stock + productData.stock,
-                                costPrice: productData.costPrice,
-                                sellingPrice: productData.sellingPrice,
                                 description: productData.description || existingProduct.description,
-                                unitType: productData.unitType || existingProduct.unitType,
                                 unitsPerPack: productData.unitsPerPack || existingProduct.unitsPerPack,
                                 requiresPrescription: productData.requiresPrescription !== undefined ? productData.requiresPrescription : existingProduct.requiresPrescription
                             },
@@ -683,16 +668,6 @@ const bulkImportProducts = async (req, res) => {
                                         name: true
                                     }
                                 }
-                            }
-                        });
-                        await prisma.stockMovement.create({
-                            data: {
-                                productId: existingProduct.id,
-                                type: 'IN',
-                                quantity: productData.stock,
-                                reason: 'Bulk Import - Stock Update',
-                                reference: 'BULK_IMPORT_UPDATE',
-                                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
                             }
                         });
                         results.successful.push(updatedProduct);
@@ -724,8 +699,6 @@ const bulkImportProducts = async (req, res) => {
                     categoryId: productData.categoryId,
                     supplierId: productData.supplierId,
                     branchId: productData.branchId,
-                    sellingPrice: productData.sellingPrice,
-                    stock: productData.stock
                 });
                 console.log(`BranchId for product ${productData.name}:`, productData.branchId);
                 console.log(`BranchId type:`, typeof productData.branchId);
@@ -752,6 +725,16 @@ const bulkImportProducts = async (req, res) => {
                         });
                     }
                 }
+                const branchForCompany = await prisma.branch.findUnique({
+                    where: { id: productData.branchId },
+                    select: { companyId: true }
+                });
+                if (!branchForCompany) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Branch not found'
+                    });
+                }
                 const product = await prisma.product.create({
                     data: {
                         name: productData.name,
@@ -759,13 +742,10 @@ const bulkImportProducts = async (req, res) => {
                         categoryId: productData.categoryId,
                         supplierId: productData.supplierId,
                         branchId: productData.branchId,
+                        companyId: branchForCompany.companyId,
                         createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-                        costPrice: productData.costPrice || 0,
-                        sellingPrice: productData.sellingPrice,
-                        stock: productData.stock,
                         minStock: productData.minStock || 10,
                         maxStock: productData.maxStock || null,
-                        unitType: productData.unitType || 'tablets',
                         unitsPerPack: productData.unitsPerPack || 1,
                         barcode: finalBarcode || null,
                         requiresPrescription: productData.requiresPrescription || false,
@@ -784,16 +764,6 @@ const bulkImportProducts = async (req, res) => {
                     }
                 });
                 results.successful.push(product);
-                await prisma.stockMovement.create({
-                    data: {
-                        productId: product.id,
-                        type: 'IN',
-                        quantity: productData.stock,
-                        reason: 'Bulk Import',
-                        reference: 'BULK_IMPORT',
-                        createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-                    }
-                });
             }
             catch (error) {
                 console.error(`=== ERROR PROCESSING PRODUCT ${productData.name} ===`);
@@ -1026,7 +996,6 @@ const getStockMovements = async (req, res) => {
                             id: true,
                             name: true,
                             sku: true,
-                            unitType: true,
                             branch: {
                                 select: {
                                     id: true,

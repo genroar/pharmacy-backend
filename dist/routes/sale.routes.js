@@ -10,5 +10,6 @@ router.get('/:id', sale_controller_1.getSale);
 router.get('/receipt/:receiptNumber', sale_controller_1.getSaleByReceiptNumber);
 router.get('/receipts', sale_controller_1.getAvailableReceiptNumbers);
 router.post('/', sale_controller_1.createSale);
+router.put('/:id', sale_controller_1.updateSale);
 exports.default = router;
 //# sourceMappingURL=sale.routes.js.map

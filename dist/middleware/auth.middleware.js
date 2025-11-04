@@ -21,6 +21,7 @@ const authenticate = async (req, res, next) => {
                 username: true,
                 role: true,
                 branchId: true,
+                companyId: true,
                 createdBy: true,
                 isActive: true
             }
@@ -41,12 +42,22 @@ const authenticate = async (req, res, next) => {
         if (user.role === 'ADMIN' && (!createdBy || createdBy === '')) {
             createdBy = user.id;
         }
+        const selectedCompanyId = req.header('X-Company-ID');
+        const selectedBranchId = req.header('X-Branch-ID');
+        console.log('🔍 Auth middleware - Headers received:', {
+            'X-Company-ID': selectedCompanyId,
+            'X-Branch-ID': selectedBranchId,
+            'All headers': req.headers
+        });
         req.user = {
             id: user.id,
             username: user.username,
             role: user.role,
             branchId: user.branchId || undefined,
-            createdBy: createdBy || undefined
+            companyId: user.companyId || undefined,
+            createdBy: createdBy || undefined,
+            selectedCompanyId: selectedCompanyId || undefined,
+            selectedBranchId: selectedBranchId || undefined
         };
         return next();
     }
@@ -70,62 +81,77 @@ const authorize = (...roles) => {
 };
 exports.authorize = authorize;
 const buildAdminWhereClause = (req, baseWhere = {}) => {
+    const whereClause = { ...baseWhere };
+    if (req.user?.selectedCompanyId) {
+        whereClause.companyId = req.user.selectedCompanyId;
+        console.log('🏢 Adding company context to where clause:', req.user.selectedCompanyId);
+    }
     if (req.user?.role === 'SUPERADMIN') {
-        return baseWhere;
+        return whereClause;
     }
     if (req.user?.createdBy) {
         return {
-            ...baseWhere,
+            ...whereClause,
             createdBy: req.user.createdBy
         };
     }
     return {
-        ...baseWhere,
+        ...whereClause,
         createdBy: 'non-existent-admin-id'
     };
 };
 exports.buildAdminWhereClause = buildAdminWhereClause;
 const buildBranchWhereClause = (req, baseWhere = {}) => {
+    const whereClause = { ...baseWhere };
+    if (req.user?.selectedCompanyId) {
+        whereClause.companyId = req.user.selectedCompanyId;
+        console.log('🏢 Adding company context to branch where clause:', req.user.selectedCompanyId);
+    }
     if (req.user?.role === 'SUPERADMIN') {
-        return baseWhere;
+        return whereClause;
     }
     if (req.user?.role === 'ADMIN') {
-        return (0, exports.buildAdminWhereClause)(req, baseWhere);
+        return (0, exports.buildAdminWhereClause)(req, whereClause);
     }
     if (req.user?.role === 'MANAGER' && req.user?.branchId) {
         return {
-            ...baseWhere,
+            ...whereClause,
             createdBy: req.user.createdBy,
             branchId: req.user.branchId
         };
     }
     if (req.user?.role === 'CASHIER' && req.user?.createdBy) {
-        return (0, exports.buildAdminWhereClause)(req, baseWhere);
+        return (0, exports.buildAdminWhereClause)(req, whereClause);
     }
     return {
-        ...baseWhere,
+        ...whereClause,
         createdBy: 'non-existent-admin-id'
     };
 };
 exports.buildBranchWhereClause = buildBranchWhereClause;
 const buildBranchWhereClauseForRelation = (req, baseWhere = {}) => {
+    const whereClause = { ...baseWhere };
+    if (req.user?.selectedCompanyId) {
+        whereClause.companyId = req.user.selectedCompanyId;
+        console.log('🏢 Adding company context to relation where clause:', req.user.selectedCompanyId);
+    }
     if (req.user?.role === 'SUPERADMIN') {
-        return baseWhere;
+        return whereClause;
     }
     if (req.user?.role === 'ADMIN') {
-        return (0, exports.buildAdminWhereClause)(req, baseWhere);
+        return (0, exports.buildAdminWhereClause)(req, whereClause);
     }
     if (req.user?.role === 'MANAGER' && req.user?.branchId) {
         return {
-            ...baseWhere,
+            ...whereClause,
             createdBy: req.user.createdBy
         };
     }
     if (req.user?.role === 'CASHIER' && req.user?.createdBy) {
-        return (0, exports.buildAdminWhereClause)(req, baseWhere);
+        return (0, exports.buildAdminWhereClause)(req, whereClause);
     }
     return {
-        ...baseWhere,
+        ...whereClause,
         createdBy: 'non-existent-admin-id'
     };
 };

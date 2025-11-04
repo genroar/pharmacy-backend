@@ -5,7 +5,10 @@ export interface AuthRequest extends Request {
         username: string;
         role: string;
         branchId?: string;
+        companyId?: string;
         createdBy?: string;
+        selectedCompanyId?: string;
+        selectedBranchId?: string;
     };
 }
 export declare const authenticate: (req: AuthRequest, res: Response, next: NextFunction) => Promise<void | Response<any, Record<string, any>>>;

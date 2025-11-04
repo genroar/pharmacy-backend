@@ -9,11 +9,16 @@ const joi_1 = __importDefault(require("joi"));
 const prisma = new client_1.PrismaClient();
 const createCategorySchema = joi_1.default.object({
     name: joi_1.default.string().required(),
-    description: joi_1.default.string().allow('')
+    description: joi_1.default.string().allow(''),
+    type: joi_1.default.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL').default('GENERAL'),
+    color: joi_1.default.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
+    branchId: joi_1.default.string().optional()
 });
 const updateCategorySchema = joi_1.default.object({
     name: joi_1.default.string(),
-    description: joi_1.default.string().allow('')
+    description: joi_1.default.string().allow(''),
+    type: joi_1.default.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL'),
+    color: joi_1.default.string().pattern(/^#[0-9A-Fa-f]{6}$/)
 });
 const getCategories = async (req, res) => {
     try {
@@ -21,29 +26,124 @@ const getCategories = async (req, res) => {
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {};
-        if (req.user?.role === 'SUPERADMIN') {
-        }
-        else if (req.user?.role === 'ADMIN') {
-            where.createdBy = req.user.createdBy || req.user.id;
-        }
-        else if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
-        }
-        else if (req.user?.id) {
-            where.createdBy = req.user.id;
+        const targetBranchId = branchId && typeof branchId === 'string' && branchId.trim() !== ''
+            ? branchId
+            : req.user?.selectedBranchId || req.user?.branchId;
+        const targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+        if (targetBranchId) {
+            const branchConditions = [
+                { branchId: targetBranchId }
+            ];
+            if (req.user?.role !== 'SUPERADMIN') {
+                const userCreatedBy = req.user?.createdBy || req.user?.id;
+                if (userCreatedBy) {
+                    branchConditions.push({
+                        AND: [
+                            { branchId: null },
+                            { createdBy: userCreatedBy }
+                        ]
+                    });
+                }
+            }
+            where.OR = branchConditions;
         }
         else {
-            where.createdBy = 'non-existent-admin-id';
+            if (req.user?.role === 'SUPERADMIN') {
+            }
+            else if (req.user?.role === 'ADMIN') {
+                where.createdBy = req.user.createdBy || req.user.id;
+            }
+            else if (req.user?.createdBy) {
+                where.createdBy = req.user.createdBy;
+            }
+            else if (req.user?.id) {
+                where.createdBy = req.user.id;
+            }
+            else {
+                where.createdBy = 'non-existent-admin-id';
+            }
+        }
+        let finalWhere = { ...where };
+        if (targetCompanyId) {
+            if (finalWhere.OR) {
+                finalWhere.AND = [
+                    { OR: finalWhere.OR },
+                    {
+                        OR: [
+                            { companyId: targetCompanyId },
+                            { companyId: null }
+                        ]
+                    }
+                ];
+                delete finalWhere.OR;
+            }
+            else {
+                finalWhere.OR = [
+                    { companyId: targetCompanyId },
+                    { companyId: null }
+                ];
+            }
+        }
+        if (targetBranchId && req.query.filterByProducts === 'true') {
+            const categoriesWithProductsInBranch = await prisma.product.findMany({
+                where: {
+                    branchId: targetBranchId
+                },
+                select: {
+                    categoryId: true
+                },
+                distinct: ['categoryId']
+            });
+            const categoryIds = categoriesWithProductsInBranch
+                .map(p => p.categoryId)
+                .filter((id) => typeof id === 'string' && id.trim() !== '');
+            if (categoryIds.length > 0) {
+                if (finalWhere.AND) {
+                    finalWhere.AND.push({ id: { in: categoryIds } });
+                }
+                else {
+                    finalWhere.id = { in: categoryIds };
+                }
+            }
+            else {
+                finalWhere.id = 'non-existent';
+            }
         }
         if (search) {
-            where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { description: { contains: search, mode: 'insensitive' } }
-            ];
+            if (finalWhere.AND) {
+                finalWhere.AND.push({
+                    OR: [
+                        { name: { contains: search, mode: 'insensitive' } },
+                        { description: { contains: search, mode: 'insensitive' } }
+                    ]
+                });
+            }
+            else if (finalWhere.OR) {
+                finalWhere = {
+                    AND: [
+                        { OR: finalWhere.OR },
+                        {
+                            OR: [
+                                { name: { contains: search, mode: 'insensitive' } },
+                                { description: { contains: search, mode: 'insensitive' } }
+                            ]
+                        }
+                    ]
+                };
+            }
+            else {
+                finalWhere.OR = [
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { description: { contains: search, mode: 'insensitive' } }
+                ];
+            }
         }
+        console.log('🔍 Category query where clause:', JSON.stringify(finalWhere, null, 2));
+        console.log('🔍 Target branchId:', targetBranchId);
+        console.log('🔍 Target companyId:', targetCompanyId);
         const [categories, total] = await Promise.all([
             prisma.category.findMany({
-                where,
+                where: finalWhere,
                 skip,
                 take,
                 include: {
@@ -55,8 +155,12 @@ const getCategories = async (req, res) => {
                 },
                 orderBy: { name: 'asc' }
             }),
-            prisma.category.count({ where })
+            prisma.category.count({ where: finalWhere })
         ]);
+        console.log('🔍 Found categories:', categories.length, 'out of', total);
+        if (categories.length > 0) {
+            console.log('🔍 First category:', { id: categories[0].id, name: categories[0].name, branchId: categories[0].branchId });
+        }
         return res.json({
             success: true,
             data: {
@@ -83,21 +187,29 @@ const getCategory = async (req, res) => {
     try {
         const { id } = req.params;
         const where = { id };
-        if (req.user?.role === 'SUPERADMIN') {
-        }
-        else if (req.user?.role === 'ADMIN') {
-            where.createdBy = req.user.createdBy || req.user.id;
-        }
-        else if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
-            where.branchId = req.user.branchId;
-        }
-        else if (req.user?.id) {
-            where.createdBy = req.user.id;
-            where.branchId = req.user.branchId;
+        const targetBranchId = req.user?.selectedBranchId || req.user?.branchId;
+        const targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+        if (targetBranchId) {
+            where.branchId = targetBranchId;
         }
         else {
-            where.createdBy = 'non-existent-admin-id';
+            if (req.user?.role === 'SUPERADMIN') {
+            }
+            else if (req.user?.role === 'ADMIN') {
+                where.createdBy = req.user.createdBy || req.user.id;
+            }
+            else if (req.user?.createdBy) {
+                where.createdBy = req.user.createdBy;
+            }
+            else if (req.user?.id) {
+                where.createdBy = req.user.id;
+            }
+            else {
+                where.createdBy = 'non-existent-admin-id';
+            }
+        }
+        if (targetCompanyId) {
+            where.companyId = targetCompanyId;
         }
         const category = await prisma.category.findFirst({
             where,
@@ -143,33 +255,58 @@ const createCategory = async (req, res) => {
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const { name, description } = req.body;
-        const existingCategory = await prisma.category.findFirst({
-            where: {
-                name: name,
-                createdBy: req.user?.createdBy || req.user?.id
-            }
-        });
-        if (existingCategory) {
-            console.log('Category with this name already exists for this admin:', existingCategory);
+        const { name, description, type, color, branchId } = req.body;
+        const userBranchId = req.user?.branchId;
+        const userCompanyId = req.user?.companyId;
+        const categoryBranchId = branchId || userBranchId;
+        const categoryCompanyId = userCompanyId;
+        if (!categoryBranchId) {
+            console.log('Category creation failed: No branchId provided');
             return res.status(400).json({
                 success: false,
-                message: 'Category with this name already exists'
+                message: 'Branch ID is required to create a category. Please ensure you are associated with a branch.'
             });
         }
-        console.log('Creating category with data:', {
+        const where = {
+            name: name,
+            branchId: categoryBranchId
+        };
+        const existingCategory = await prisma.category.findFirst({
+            where
+        });
+        if (existingCategory) {
+            console.log('Category with this name already exists for this branch:', existingCategory);
+            return res.status(400).json({
+                success: false,
+                message: 'Category with this name already exists in this branch'
+            });
+        }
+        const data = {
             name,
-            description,
+            description: description || null,
+            type: type || 'GENERAL',
+            color: color || '#3B82F6',
+            branchId: categoryBranchId,
             createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
+        };
+        if (categoryCompanyId) {
+            data.companyId = categoryCompanyId;
+        }
+        console.log('Creating category with data:', {
+            name: data.name,
+            branchId: data.branchId,
+            companyId: data.companyId,
+            createdBy: data.createdBy
         });
         const category = await prisma.category.create({
-            data: {
-                name,
-                description: description || null,
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
-            }
+            data
         });
-        console.log('Category created successfully:', category);
+        console.log('Category created successfully:', {
+            id: category.id,
+            name: category.name,
+            branchId: category.branchId,
+            companyId: category.companyId
+        });
         return res.status(201).json({
             success: true,
             data: category
@@ -207,11 +344,19 @@ const updateCategory = async (req, res) => {
             });
         }
         if (updateData.name && updateData.name !== existingCategory.name) {
+            const targetBranchId = req.user?.selectedBranchId || req.user?.branchId || existingCategory.branchId;
+            const nameExistsWhere = {
+                name: updateData.name,
+                id: { not: id }
+            };
+            if (targetBranchId) {
+                nameExistsWhere.branchId = targetBranchId;
+            }
+            else {
+                nameExistsWhere.createdBy = req.user?.createdBy || req.user?.id;
+            }
             const nameExists = await prisma.category.findFirst({
-                where: {
-                    name: updateData.name,
-                    createdBy: req.user?.createdBy || req.user?.id
-                }
+                where: nameExistsWhere
             });
             if (nameExists) {
                 return res.status(400).json({

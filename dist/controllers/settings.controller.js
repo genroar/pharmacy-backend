@@ -145,7 +145,7 @@ const getTaxRate = async (req, res) => {
                 }
             }
         });
-        const taxRate = taxSetting ? parseFloat(taxSetting.value) : 17;
+        const taxRate = taxSetting ? parseFloat(taxSetting.value) : 0;
         res.json({
             success: true,
             data: {
