@@ -5,6 +5,7 @@ export interface CreateSaleData {
     branchId: string;
     items: SaleItemData[];
     paymentMethod: PaymentMethod;
+    paymentStatus?: PaymentStatus;
     discountAmount?: number;
     discountPercentage?: number;
     saleDate?: string;
@@ -16,6 +17,9 @@ export interface SaleItemData {
     batchId?: string;
     batchNumber?: string;
     expiryDate?: string;
+    discountPercentage?: number;
+    discountAmount?: number;
+    totalPrice?: number;
 }
 export interface SaleResponse {
     id: string;

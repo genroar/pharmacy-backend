@@ -18,9 +18,13 @@ const createSaleSchema = joi_1.default.object({
         unitPrice: joi_1.default.number().positive().required(),
         batchId: joi_1.default.string().allow(null, ''),
         batchNumber: joi_1.default.string().allow(''),
-        expiryDate: joi_1.default.string().allow('')
+        expiryDate: joi_1.default.string().allow(''),
+        discountPercentage: joi_1.default.number().min(0).max(100).optional(),
+        discountAmount: joi_1.default.number().min(0).optional(),
+        totalPrice: joi_1.default.number().min(0).optional()
     })).min(1).required(),
     paymentMethod: joi_1.default.string().valid('CASH', 'CARD', 'MOBILE', 'BANK_TRANSFER').required(),
+    paymentStatus: joi_1.default.string().valid('PENDING', 'COMPLETED', 'FAILED', 'REFUNDED').optional(),
     discountAmount: joi_1.default.number().min(0).default(0),
     discountPercentage: joi_1.default.number().min(0).max(100).default(0),
     saleDate: joi_1.default.date().optional()
@@ -333,7 +337,21 @@ const createSale = async (req, res) => {
                 console.warn('Could not fetch tax rate from settings, using default:', error);
             }
         }
-        const subtotal = saleData.items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+        const itemTotals = saleData.items.map(item => {
+            if (item.totalPrice !== undefined && item.totalPrice >= 0) {
+                return item.totalPrice;
+            }
+            const itemSubtotal = item.quantity * item.unitPrice;
+            let itemDiscountAmount = 0;
+            if (item.discountPercentage && item.discountPercentage > 0) {
+                itemDiscountAmount = itemSubtotal * (item.discountPercentage / 100);
+            }
+            else if (item.discountAmount && item.discountAmount > 0) {
+                itemDiscountAmount = item.discountAmount;
+            }
+            return itemSubtotal - itemDiscountAmount;
+        });
+        const subtotal = itemTotals.reduce((sum, total) => sum + total, 0);
         const discountAmount = saleData.discountAmount || 0;
         const subtotalAfterDiscount = subtotal - discountAmount;
         const taxAmount = subtotalAfterDiscount * (taxRate / 100);
@@ -358,6 +376,8 @@ const createSale = async (req, res) => {
                 targetBranchId = saleData.branchId;
                 console.log('🏢 Using provided branch context for sale:', { targetCompanyId, targetBranchId });
             }
+            const paymentStatus = saleData.paymentStatus || 'COMPLETED';
+            const saleStatus = paymentStatus === 'COMPLETED' ? 'COMPLETED' : 'PENDING';
             const sale = await tx.sale.create({
                 data: {
                     customerId: saleData.customerId,
@@ -371,8 +391,8 @@ const createSale = async (req, res) => {
                     discountPercentage: saleData.discountPercentage || 0,
                     totalAmount,
                     paymentMethod: saleData.paymentMethod,
-                    paymentStatus: 'COMPLETED',
-                    status: 'COMPLETED',
+                    paymentStatus: paymentStatus,
+                    status: saleStatus,
                     saleDate: saleData.saleDate ? new Date(saleData.saleDate) : undefined
                 }
             });
@@ -573,12 +593,18 @@ exports.createSale = createSale;
 const updateSale = async (req, res) => {
     try {
         const { id } = req.params;
-        const { discountPercentage, saleDate, notes } = req.body;
-        console.log('Update sale request:', { id, discountPercentage, saleDate, notes });
+        const { discountPercentage, saleDate, notes, paymentStatus } = req.body;
+        console.log('Update sale request:', { id, discountPercentage, saleDate, notes, paymentStatus });
         if (discountPercentage !== undefined && (discountPercentage < 0 || discountPercentage > 100)) {
             return res.status(400).json({
                 success: false,
                 message: 'Discount percentage must be between 0 and 100'
+            });
+        }
+        if (paymentStatus !== undefined && !['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED'].includes(paymentStatus)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid payment status. Must be PENDING, COMPLETED, FAILED, or REFUNDED'
             });
         }
         const existingSale = await prisma.sale.findUnique({
@@ -616,6 +642,10 @@ const updateSale = async (req, res) => {
             newTaxAmount = subtotalAfterDiscount * 0;
             newTotalAmount = subtotalAfterDiscount + newTaxAmount;
         }
+        const newPaymentStatus = paymentStatus || existingSale.paymentStatus;
+        const newSaleStatus = newPaymentStatus === 'COMPLETED' ? 'COMPLETED' :
+            newPaymentStatus === 'PENDING' ? 'PENDING' :
+                existingSale.status;
         const updatedSale = await prisma.sale.update({
             where: { id },
             data: {
@@ -623,6 +653,8 @@ const updateSale = async (req, res) => {
                 discountAmount: newDiscountAmount,
                 taxAmount: newTaxAmount,
                 totalAmount: newTotalAmount,
+                paymentStatus: newPaymentStatus,
+                status: newSaleStatus,
                 saleDate: saleDate ? new Date(saleDate) : existingSale.saleDate,
                 updatedAt: new Date()
             },

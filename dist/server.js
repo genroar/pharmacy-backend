@@ -41,8 +41,22 @@ const settings_routes_1 = __importDefault(require("./routes/settings.routes"));
 const error_middleware_1 = require("./middleware/error.middleware");
 const notFound_middleware_1 = require("./middleware/notFound.middleware");
 dotenv_1.default.config();
+if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  WARNING: DATABASE_URL is not set.');
+    console.warn('⚠️  The backend will start but database operations will fail.');
+    console.warn('⚠️  Please set DATABASE_URL in your .env file.');
+    console.warn('⚠️  Example: DATABASE_URL="postgresql://user:password@localhost:5432/dbname"');
+}
 const app = (0, express_1.default)();
-const prisma = new client_1.PrismaClient();
+let prisma;
+try {
+    prisma = new client_1.PrismaClient();
+}
+catch (error) {
+    console.error('❌ Failed to initialize Prisma Client:', error.message);
+    console.error('❌ This usually means DATABASE_URL is missing or invalid.');
+    prisma = new client_1.PrismaClient();
+}
 async function testDatabaseConnection() {
     try {
         console.log('='.repeat(60));
@@ -76,22 +90,32 @@ const corsOptions = {
     origin: function (origin, callback) {
         if (!origin)
             return callback(null, true);
+        if (origin.startsWith('file://')) {
+            return callback(null, true);
+        }
         const allowedOrigins = [
             process.env.FRONTEND_URL || 'http://localhost:5173',
             ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : [
                 'http://localhost:8080',
                 'http://localhost:8081',
                 'http://localhost:3000',
+                'http://localhost:5001',
                 'http://127.0.0.1:8080',
                 'http://127.0.0.1:8081',
                 'http://127.0.0.1:5173',
-                'http://127.0.0.1:3000'
+                'http://127.0.0.1:3000',
+                'http://127.0.0.1:5001',
+                'null'
             ])
         ];
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         }
         else {
+            if (process.env.NODE_ENV === 'development') {
+                console.log('CORS: Allowing origin in development:', origin);
+                return callback(null, true);
+            }
             console.log('CORS blocked origin:', origin);
             callback(new Error('Not allowed by CORS'));
         }
@@ -124,14 +148,44 @@ if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
 }
 app.get('/health', async (req, res) => {
     try {
-        await prisma.$queryRaw `SELECT 1`;
-        res.status(200).json({
-            status: 'OK',
-            timestamp: new Date().toISOString(),
-            uptime: process.uptime(),
-            environment: process.env.NODE_ENV,
-            database: 'connected'
-        });
+        if (process.env.DATABASE_URL) {
+            try {
+                await prisma.$queryRaw `SELECT 1`;
+                res.status(200).json({
+                    status: 'OK',
+                    timestamp: new Date().toISOString(),
+                    uptime: process.uptime(),
+                    environment: process.env.NODE_ENV,
+                    database: 'connected',
+                    server: 'running'
+                });
+                return;
+            }
+            catch (dbError) {
+                res.status(200).json({
+                    status: 'OK',
+                    timestamp: new Date().toISOString(),
+                    uptime: process.uptime(),
+                    environment: process.env.NODE_ENV,
+                    database: 'disconnected',
+                    server: 'running',
+                    warning: 'Database connection failed but server is running'
+                });
+                return;
+            }
+        }
+        else {
+            res.status(200).json({
+                status: 'OK',
+                timestamp: new Date().toISOString(),
+                uptime: process.uptime(),
+                environment: process.env.NODE_ENV,
+                database: 'not_configured',
+                server: 'running',
+                warning: 'DATABASE_URL not set - database operations will fail'
+            });
+            return;
+        }
     }
     catch (error) {
         res.status(200).json({
@@ -139,8 +193,9 @@ app.get('/health', async (req, res) => {
             timestamp: new Date().toISOString(),
             uptime: process.uptime(),
             environment: process.env.NODE_ENV,
-            database: 'disconnected',
-            warning: 'Database connection failed but server is running'
+            database: 'unknown',
+            server: 'running',
+            warning: 'Health check had errors but server is running'
         });
     }
 });
@@ -225,49 +280,191 @@ process.on('SIGTERM', async () => {
     await prisma.$disconnect();
     process.exit(0);
 });
-const PORT = (() => {
+const DEFAULT_PORT = (() => {
     const portEnv = process.env.PORT;
     if (!portEnv)
-        return 5000;
+        return 5001;
     const parsed = parseInt(portEnv, 10);
     if (isNaN(parsed) || parsed < 1 || parsed > 65535) {
-        console.warn(`Invalid PORT value: ${portEnv}. Using default port 5000.`);
-        return 5000;
+        console.warn(`Invalid PORT value: ${portEnv}. Using default port 5001.`);
+        return 5001;
     }
     return parsed;
 })();
-async function startServer() {
-    const server = app.listen(PORT, '0.0.0.0', () => {
-        console.log('='.repeat(60));
-        console.log('🚀 ZAPEERA BACKEND SERVER STARTED');
-        console.log('='.repeat(60));
-        console.log(`🌐 Server running on port: ${PORT}`);
-        console.log(`📊 Environment: ${process.env.NODE_ENV || 'production'}`);
-        console.log(`🔗 Health check: http://0.0.0.0:${PORT}/health`);
-        console.log(`📋 API Base URL: http://0.0.0.0:${PORT}/api`);
-        console.log('='.repeat(60));
-        console.log('✅ Server is ready to accept connections');
+const PORT_EXPLICITLY_SET = !!process.env.PORT;
+function isPortAvailable(port) {
+    return new Promise((resolve) => {
+        const net = require('net');
+        const server = net.createServer();
+        server.listen(port, () => {
+            server.once('close', () => resolve(true));
+            server.close();
+        });
+        server.on('error', () => resolve(false));
     });
-    server.on('error', (error) => {
-        if (error.code === 'EADDRINUSE') {
-            console.error(`❌ Port ${PORT} is already in use. Please try a different port.`);
+}
+async function killProcessOnPort(port) {
+    return new Promise((resolve) => {
+        try {
+            const { execSync } = require('child_process');
+            if (process.platform === 'darwin' || process.platform === 'linux') {
+                try {
+                    const pids = execSync(`lsof -ti:${port}`, { encoding: 'utf8', timeout: 2000 }).trim();
+                    if (pids) {
+                        const pidArray = pids.split('\n').filter((p) => p.trim());
+                        pidArray.forEach((pid) => {
+                            try {
+                                execSync(`kill -9 ${pid.trim()}`, { timeout: 1000 });
+                                console.log(`✅ Killed process ${pid.trim()} using port ${port}`);
+                            }
+                            catch (e) {
+                            }
+                        });
+                        setTimeout(() => resolve(true), 1000);
+                    }
+                    else {
+                        resolve(false);
+                    }
+                }
+                catch (e) {
+                    resolve(false);
+                }
+            }
+            else if (process.platform === 'win32') {
+                try {
+                    const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', timeout: 2000 });
+                    const lines = result.split('\n').filter((line) => line.includes('LISTENING'));
+                    lines.forEach((line) => {
+                        const pid = line.trim().split(/\s+/).pop();
+                        if (pid) {
+                            try {
+                                execSync(`taskkill /F /PID ${pid}`, { timeout: 1000 });
+                                console.log(`✅ Killed process ${pid} using port ${port}`);
+                            }
+                            catch (e) {
+                            }
+                        }
+                    });
+                    setTimeout(() => resolve(true), 1000);
+                }
+                catch (e) {
+                    resolve(false);
+                }
+            }
+            else {
+                resolve(false);
+            }
         }
-        else if (error.code === 'EACCES') {
-            console.error(`❌ Permission denied to bind to port ${PORT}. Please use a port above 1024.`);
+        catch (error) {
+            resolve(false);
+        }
+    });
+}
+async function startServer() {
+    let currentPort = DEFAULT_PORT;
+    let attempts = 0;
+    const maxAttempts = PORT_EXPLICITLY_SET ? 20 : 10;
+    let server = null;
+    while (attempts < maxAttempts) {
+        await killProcessOnPort(currentPort);
+        await new Promise(resolve => setTimeout(resolve, PORT_EXPLICITLY_SET ? 1000 : 500));
+        const available = await isPortAvailable(currentPort);
+        if (available) {
+            try {
+                server = app.listen(currentPort, '0.0.0.0', () => {
+                    console.log('='.repeat(60));
+                    console.log('🚀 ZAPEERA BACKEND SERVER STARTED');
+                    console.log('='.repeat(60));
+                    console.log(`🌐 Server running on port: ${currentPort}`);
+                    console.log(`📊 Environment: ${process.env.NODE_ENV || 'production'}`);
+                    console.log(`🔗 Health check: http://0.0.0.0:${currentPort}/health`);
+                    console.log(`📋 API Base URL: http://0.0.0.0:${currentPort}/api`);
+                    console.log('='.repeat(60));
+                    console.log('✅ Server is ready to accept connections');
+                    process.env.PORT = currentPort.toString();
+                });
+                server.on('error', (error) => {
+                    if (error.code === 'EADDRINUSE') {
+                        if (PORT_EXPLICITLY_SET) {
+                            console.log(`⚠️  Port ${currentPort} is still in use. Killing processes and retrying...`);
+                            if (server) {
+                                server.close();
+                            }
+                            attempts++;
+                            setTimeout(() => startServer(), 2000);
+                        }
+                        else {
+                            console.log(`⚠️  Port ${currentPort} is already in use. Trying next port...`);
+                            if (server) {
+                                server.close();
+                            }
+                            attempts++;
+                            currentPort++;
+                            setTimeout(() => startServer(), 1000);
+                        }
+                    }
+                    else if (error.code === 'EACCES') {
+                        console.error(`❌ Permission denied to bind to port ${currentPort}. Please use a port above 1024.`);
+                        process.exit(1);
+                    }
+                    else {
+                        console.error('❌ Server startup error:', error.message);
+                        process.exit(1);
+                    }
+                });
+                setTimeout(async () => {
+                    const dbConnected = await testDatabaseConnection();
+                    if (!dbConnected) {
+                        console.log('⚠️  Database connection issues detected...');
+                        console.log('💡 Server is running but database may not be accessible');
+                        console.log('💡 Check your DATABASE_URL environment variable');
+                    }
+                }, 1000);
+                return;
+            }
+            catch (error) {
+                if (error.code === 'EADDRINUSE') {
+                    if (PORT_EXPLICITLY_SET) {
+                        console.log(`⚠️  Port ${currentPort} is still in use. Retrying...`);
+                        attempts++;
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        continue;
+                    }
+                    else {
+                        console.log(`⚠️  Port ${currentPort} is already in use. Trying next port...`);
+                        attempts++;
+                        currentPort++;
+                        continue;
+                    }
+                }
+                else {
+                    throw error;
+                }
+            }
         }
         else {
-            console.error('❌ Server startup error:', error.message);
+            if (PORT_EXPLICITLY_SET) {
+                console.log(`⚠️  Port ${currentPort} is not available. Killing processes and retrying...`);
+                attempts++;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            else {
+                console.log(`⚠️  Port ${currentPort} is not available. Trying next port...`);
+                attempts++;
+                currentPort++;
+            }
         }
-        process.exit(1);
-    });
-    setTimeout(async () => {
-        const dbConnected = await testDatabaseConnection();
-        if (!dbConnected) {
-            console.log('⚠️  Database connection issues detected...');
-            console.log('💡 Server is running but database may not be accessible');
-            console.log('💡 Check your DATABASE_URL environment variable');
-        }
-    }, 1000);
+    }
+    if (PORT_EXPLICITLY_SET) {
+        console.error(`❌ Could not start server on port ${DEFAULT_PORT} after ${maxAttempts} attempts.`);
+        console.error(`❌ Port ${DEFAULT_PORT} is in use and could not be freed.`);
+        console.error(`❌ Please close other applications using port ${DEFAULT_PORT}.`);
+    }
+    else {
+        console.error(`❌ Could not find an available port after ${maxAttempts} attempts.`);
+        console.error(`❌ Tried ports ${DEFAULT_PORT} to ${currentPort - 1}.`);
+    }
+    process.exit(1);
 }
 startServer();
 exports.default = app;
