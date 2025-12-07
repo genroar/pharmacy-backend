@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest, buildBranchWhereClause, buildBranchWhereClauseForRelation } from '../middleware/auth.middleware';
 import { notifyRefundChange } from '../routes/sse.routes';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Utility function to convert BigInt, Decimal, and Date values to strings for JSON serialization
 function serializeBigInt(obj: any): any {
@@ -73,7 +71,9 @@ const createRefundSchema = Joi.object({
       productId: Joi.string().required(),
       quantity: Joi.number().positive().required(),
       unitPrice: Joi.number().positive().required(),
-      reason: Joi.string().required()
+      reason: Joi.string().required(),
+      batchId: Joi.string().allow(null, '').optional(), // Optional batch ID for stock return
+      saleItemId: Joi.string().allow(null, '').optional() // Optional sale item ID
     })
   ).min(1).required(),
   refundedBy: Joi.string().required()
@@ -81,6 +81,7 @@ const createRefundSchema = Joi.object({
 
 export const createRefund = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     console.log('🔍 DEBUG - Refund request received:', JSON.stringify(req.body, null, 2));
 
     const { error } = createRefundSchema.validate(req.body);
@@ -94,16 +95,17 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
-    const { originalSaleId, refundReason, items, refundedBy }: CreateRefundData = req.body;
+    const { originalSaleId, refundReason, items, refundedBy } = req.body;
     console.log('🔍 DEBUG - Processing refund for sale:', originalSaleId);
 
-    // Verify the original sale exists
+    // Verify the original sale exists and get sale items with batch info
     const originalSale = await prisma.sale.findUnique({
       where: { id: originalSaleId },
       include: {
         items: {
           include: {
-            product: true
+            product: true,
+            batch: true
           }
         }
       }
@@ -117,8 +119,20 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       return;
     }
 
+    // Check if sale is already refunded
+    if (originalSale.status === 'REFUNDED') {
+      res.status(400).json({
+        success: false,
+        message: 'This sale has already been refunded'
+      });
+      return;
+    }
+
+    // Calculate total refund amount
+    const refundAmount = items.reduce((sum: number, item: any) => sum + (item.quantity * item.unitPrice), 0);
+
     // Use transaction to ensure data consistency
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       console.log('🔍 DEBUG - Starting refund transaction');
 
       // Create refund record
@@ -127,9 +141,10 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
           originalSaleId,
           refundReason,
           refundedBy,
-          refundAmount: items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0),
-          createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-          status: 'PROCESSED'
+          refundAmount,
+          createdBy: req.user?.createdBy || req.user?.id,
+          status: 'PROCESSED',
+          processedAt: new Date()
         }
       });
 
@@ -160,13 +175,62 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             reason: item.reason,
-            createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
+            createdBy: req.user?.createdBy || req.user?.id
           }
         });
 
-        // Update product stock (add back to inventory)
-        // Stock is now managed through batches, no need to update product stock directly
-        console.log('🔍 DEBUG - Stock return processed for', product.name);
+        // Find the batch to return items to
+        // First try to use the batchId from the refund item if provided
+        let batchId = item.batchId;
+
+        // If no batchId provided, try to find it from the original sale items
+        if (!batchId) {
+          const originalSaleItem = originalSale.items.find(
+            (si: any) => si.productId === item.productId && si.batchId
+          );
+          if (originalSaleItem) {
+            batchId = originalSaleItem.batchId;
+          }
+        }
+
+        // Update batch quantity (add items back to inventory)
+        if (batchId) {
+          console.log('🔍 DEBUG - Adding', item.quantity, 'items back to batch:', batchId);
+          await tx.batch.update({
+            where: { id: batchId },
+            data: {
+              quantity: {
+                increment: item.quantity
+              }
+            }
+          });
+          console.log('✅ DEBUG - Batch quantity updated');
+        } else {
+          // If no specific batch, try to find any active batch for this product and branch
+          const activeBatch = await tx.batch.findFirst({
+            where: {
+              productId: item.productId,
+              branchId: originalSale.branchId,
+              isActive: true
+            },
+            orderBy: { expireDate: 'asc' }
+          });
+
+          if (activeBatch) {
+            console.log('🔍 DEBUG - Adding', item.quantity, 'items back to first available batch:', activeBatch.id);
+            await tx.batch.update({
+              where: { id: activeBatch.id },
+              data: {
+                quantity: {
+                  increment: item.quantity
+                }
+              }
+            });
+            console.log('✅ DEBUG - Batch quantity updated');
+          } else {
+            console.log('⚠️ DEBUG - No batch found to return items to for product:', product.name);
+          }
+        }
 
         // Create stock movement record for the return
         await tx.stockMovement.create({
@@ -176,7 +240,7 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
             quantity: item.quantity,
             reason: `Refund: ${item.reason}`,
             reference: `REF-${refund.id}`,
-            createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
+            createdBy: req.user?.createdBy || req.user?.id
           }
         });
 
@@ -186,8 +250,13 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
       // Update original sale status to REFUNDED
       await tx.sale.update({
         where: { id: originalSaleId },
-        data: { status: 'REFUNDED' }
+        data: {
+          status: 'REFUNDED',
+          updatedAt: new Date()
+        }
       });
+
+      console.log('✅ DEBUG - Sale status updated to REFUNDED');
 
       return { refund, refundItems };
     });
@@ -204,20 +273,21 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
         refund: result.refund,
         items: result.refundItems
       },
-      message: 'Refund processed successfully'
+      message: 'Refund processed successfully. Items have been added back to inventory.'
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Create refund error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: error?.message || 'Internal server error'
     });
   }
 };
 
 export const getRefunds = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -228,20 +298,65 @@ export const getRefunds = async (req: AuthRequest, res: Response): Promise<void>
     } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    // Build where clause with data isolation (using relation version since Refund doesn't have branchId directly)
-    const whereClause: any = buildBranchWhereClauseForRelation(req, {});
+    console.log('🔍 getRefunds - User context:', {
+      userId: req.user?.id,
+      role: req.user?.role,
+      branchId: req.user?.branchId,
+      companyId: req.user?.companyId,
+      createdBy: req.user?.createdBy
+    });
+
+    // Build where clause - filter by original sale's branch/company
+    const whereClause: any = {};
+
+    // Get the target branch/company based on user role
+    let targetBranchId = req.user?.selectedBranchId || req.user?.branchId;
+    let targetCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+
+    // If user has branchId but no companyId, get it from branch
+    if (targetBranchId && !targetCompanyId) {
+      const branch = await prisma.branch.findUnique({
+        where: { id: targetBranchId },
+        select: { companyId: true }
+      });
+      if (branch?.companyId) {
+        targetCompanyId = branch.companyId;
+      }
+    }
+
+    // Filter refunds through their original sale
+    if (req.user?.role === 'SUPERADMIN') {
+      // SuperAdmin can see all refunds
+    } else if (req.user?.role === 'ADMIN') {
+      // Admin sees refunds from sales created by them or their staff
+      whereClause.originalSale = {
+        createdBy: req.user.createdBy || req.user.id
+      };
+    } else if (req.user?.role === 'MANAGER' && targetBranchId) {
+      // Manager sees refunds for their branch
+      whereClause.originalSale = {
+        branchId: targetBranchId
+      };
+    } else if (req.user?.role === 'CASHIER' && targetBranchId) {
+      // Cashier sees refunds for their branch
+      whereClause.originalSale = {
+        branchId: targetBranchId
+      };
+    }
+
+    // Apply branch filter if provided
+    if (branchId) {
+      whereClause.originalSale = {
+        ...whereClause.originalSale,
+        branchId: branchId as string
+      };
+    }
 
     // Search filter
     if (search) {
       whereClause.OR = [
-        { refundReason: { contains: search as string, mode: 'insensitive' } },
-        { originalSale: {
-          receipts: {
-            some: {
-              receiptNumber: { contains: search as string, mode: 'insensitive' }
-            }
-          }
-        } }
+        { refundReason: { contains: search as string } },
+        { id: { contains: search as string } }
       ];
     }
 
@@ -252,29 +367,13 @@ export const getRefunds = async (req: AuthRequest, res: Response): Promise<void>
         whereClause.createdAt.gte = new Date(startDate as string);
       }
       if (endDate) {
-        // Add 23:59:59 to end date to include the entire day
         const endDateWithTime = new Date(endDate as string);
         endDateWithTime.setHours(23, 59, 59, 999);
         whereClause.createdAt.lte = endDateWithTime;
       }
     }
 
-    // Branch filter - only apply if not already filtered by buildBranchWhereClause
-    if (branchId && req.user?.role !== 'MANAGER') {
-      whereClause.originalSale = {
-        ...whereClause.originalSale,
-        branchId: branchId as string
-      };
-    } else if (req.user?.role === 'MANAGER' && req.user?.branchId) {
-      // For managers, ensure we only get refunds for sales from their branch
-      whereClause.originalSale = {
-        ...whereClause.originalSale,
-        branchId: req.user.branchId
-      };
-    }
-
-    // Remove branchId from the main where clause since Refund model doesn't have it directly
-    delete whereClause.branchId;
+    console.log('🔍 getRefunds - Where clause:', JSON.stringify(whereClause, null, 2));
 
     const [refunds, total] = await Promise.all([
       prisma.refund.findMany({
@@ -283,8 +382,19 @@ export const getRefunds = async (req: AuthRequest, res: Response): Promise<void>
           originalSale: {
             include: {
               customer: true,
-              user: true,
-              receipts: true
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  username: true
+                }
+              },
+              receipts: true,
+              items: {
+                include: {
+                  product: true
+                }
+              }
             }
           },
           items: {
@@ -307,8 +417,9 @@ export const getRefunds = async (req: AuthRequest, res: Response): Promise<void>
       prisma.refund.count({ where: whereClause })
     ]);
 
+    console.log('🔍 getRefunds - Found', refunds.length, 'refunds, total:', total);
+
     const serializedRefunds = serializeBigInt(refunds);
-    console.log('🔍 Serialized refunds:', JSON.stringify(serializedRefunds[0], null, 2));
 
     res.json({
       success: true,
@@ -334,6 +445,7 @@ export const getRefunds = async (req: AuthRequest, res: Response): Promise<void>
 
 export const getRefundById = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const refund = await prisma.refund.findUnique({

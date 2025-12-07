@@ -1,14 +1,12 @@
-
-
+// CRITICAL: Import database initialization FIRST to ensure DATABASE_URL is set
+import '../config/database.init';
 
 import { Request, Response } from 'express';
-import { PrismaClient, PaymentStatus } from '@prisma/client';
-import { CreateSaleData, SaleResponse } from '../models/sale.model';
+import { getPrisma } from '../utils/db.util';
+import { CreateSaleData, SaleResponse, PaymentStatus } from '../models/sale.model';
 import { AuthRequest, buildBranchWhereClause } from '../middleware/auth.middleware';
 import { notifySaleChange } from '../routes/sse.routes';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createSaleSchema = Joi.object({
@@ -36,6 +34,7 @@ const createSaleSchema = Joi.object({
 
 export const getSales = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -153,6 +152,7 @@ export const getSales = async (req: AuthRequest, res: Response) => {
 
 export const getSale = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const sale = await prisma.sale.findUnique({
@@ -221,6 +221,7 @@ export const getSale = async (req: Request, res: Response) => {
 
 export const getSaleByReceiptNumber = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { receiptNumber } = req.params;
 
     console.log('Looking up receipt number:', receiptNumber);
@@ -307,6 +308,7 @@ export const getSaleByReceiptNumber = async (req: Request, res: Response) => {
 
 export const getAvailableReceiptNumbers = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const receipts = await prisma.receipt.findMany({
       select: {
         id: true,
@@ -335,6 +337,7 @@ export const getAvailableReceiptNumbers = async (req: Request, res: Response) =>
 
 export const createSale = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('Sale creation request body:', req.body);
     const { error } = createSaleSchema.validate(req.body);
     if (error) {
@@ -428,7 +431,7 @@ export const createSale = async (req: AuthRequest, res: Response) => {
       }
 
       // Determine payment status and sale status
-      const paymentStatus: PaymentStatus = saleData.paymentStatus || 'COMPLETED';
+      const paymentStatus: PaymentStatus = (saleData.paymentStatus || 'COMPLETED') as PaymentStatus;
       const saleStatus = paymentStatus === 'COMPLETED' ? 'COMPLETED' : 'PENDING';
 
       // Create sale
@@ -683,6 +686,7 @@ export const createSale = async (req: AuthRequest, res: Response) => {
 
 export const updateSale = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { discountPercentage, saleDate, notes, paymentStatus } = req.body;
 
@@ -749,7 +753,7 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
     }
 
     // Determine new payment status and sale status
-    const newPaymentStatus: PaymentStatus = paymentStatus || existingSale.paymentStatus;
+    const newPaymentStatus: PaymentStatus = (paymentStatus || existingSale.paymentStatus) as PaymentStatus;
     const newSaleStatus = newPaymentStatus === 'COMPLETED' ? 'COMPLETED' :
                           newPaymentStatus === 'PENDING' ? 'PENDING' :
                           existingSale.status;
@@ -797,7 +801,7 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
       createdAt: updatedSale.createdAt.toISOString(),
       updatedAt: updatedSale.updatedAt.toISOString(),
       saleDate: updatedSale.saleDate?.toISOString() || null,
-      items: updatedSale.items.map(item => ({
+      items: updatedSale.items.map((item: any) => ({
         ...item,
         id: item.id.toString(),
         saleId: item.saleId.toString(),
@@ -856,7 +860,7 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
         createdAt: updatedSale.company.createdAt.toISOString(),
         updatedAt: updatedSale.company.updatedAt.toISOString()
       },
-      receipts: updatedSale.receipts.map(receipt => ({
+      receipts: updatedSale.receipts.map((receipt: any) => ({
         ...receipt,
         id: receipt.id.toString(),
         saleId: receipt.saleId.toString(),

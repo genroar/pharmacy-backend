@@ -1,8 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { getPrisma } from '../utils/db.util';
 
 export interface AuthRequest extends Request {
   user?: {
@@ -27,6 +25,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
 
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
+
     // Verify user still exists and is active
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId },
@@ -37,7 +38,8 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
         branchId: true,
         companyId: true,
         createdBy: true,
-        isActive: true
+        isActive: true,
+        sessionToken: true // For single-session validation
       }
     });
 
@@ -52,6 +54,15 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       return res.status(401).json({
         message: 'Your account has been deactivated. Please contact your administrator.',
         code: 'ACCOUNT_DEACTIVATED'
+      });
+    }
+
+    // Single-session validation: Check if sessionToken matches
+    // If user logged in from another device, this token is invalid
+    if (decoded.sessionToken && user.sessionToken && decoded.sessionToken !== user.sessionToken) {
+      return res.status(401).json({
+        message: 'Session expired. You have been logged out because your account was accessed from another device.',
+        code: 'SESSION_EXPIRED_ANOTHER_DEVICE'
       });
     }
 
@@ -244,6 +255,9 @@ export const validateResourceOwnership = (resourceType: string) => {
           message: 'Resource ID required'
         });
       }
+
+      // Get database client (works with SQLite or PostgreSQL)
+      const prisma = await getPrisma();
 
       // Check if resource belongs to user's admin
       const resource = await (prisma as any)[resourceType].findFirst({

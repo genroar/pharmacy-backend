@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAttendanceStats = exports.updateAttendance = exports.getTodayAttendance = exports.getAttendance = exports.checkOut = exports.checkIn = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const checkInSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
     branchId: joi_1.default.string().required(),
@@ -22,6 +21,7 @@ const updateAttendanceSchema = joi_1.default.object({
 });
 const checkIn = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = checkInSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -109,6 +109,7 @@ const checkIn = async (req, res) => {
 exports.checkIn = checkIn;
 const checkOut = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = checkOutSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -193,6 +194,7 @@ const checkOut = async (req, res) => {
 exports.checkOut = checkOut;
 const getAttendance = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, employeeId = '', branchId = '', startDate = '', endDate = '', status = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -266,6 +268,7 @@ const getAttendance = async (req, res) => {
 exports.getAttendance = getAttendance;
 const getTodayAttendance = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { employeeId } = req.params;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -312,6 +315,7 @@ const getTodayAttendance = async (req, res) => {
 exports.getTodayAttendance = getTodayAttendance;
 const updateAttendance = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateAttendanceSchema.validate(req.body);
         if (error) {
@@ -368,6 +372,7 @@ const updateAttendance = async (req, res) => {
 exports.updateAttendance = updateAttendance;
 const getAttendanceStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId, startDate, endDate } = req.query;
         const where = {};
         if (branchId) {

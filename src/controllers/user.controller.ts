@@ -1,11 +1,9 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { CreateUserData, UpdateUserData } from '../models/user.model';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createUserSchema = Joi.object({
@@ -31,6 +29,7 @@ const updateUserSchema = Joi.object({
 
 export const getUsers = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -45,46 +44,56 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 
     const where: any = {};
 
+    // Get context from headers (set by frontend) - same as other controllers
+    const selectedCompanyId = req.headers['x-company-id'] as string || req.user?.selectedCompanyId;
+    const selectedBranchId = req.headers['x-branch-id'] as string || req.user?.selectedBranchId;
+
     // Debug: Log user context
     console.log('🔍 getUsers - User context:', {
       userId: req.user?.id,
       role: req.user?.role,
-      selectedCompanyId: req.user?.selectedCompanyId,
-      selectedBranchId: req.user?.selectedBranchId,
+      headerCompanyId: req.headers['x-company-id'],
+      headerBranchId: req.headers['x-branch-id'],
+      selectedCompanyId,
+      selectedBranchId,
       createdBy: req.user?.createdBy
     });
 
-    // Apply company context filtering if available
-    if (req.user?.selectedCompanyId) {
-      // Filter users by company through their branch relationship
-      where.branch = {
-        companyId: req.user.selectedCompanyId
-      };
-      console.log('🏢 Filtering users by selected company through branch:', req.user.selectedCompanyId);
-    } else {
-      console.log('⚠️ No selectedCompanyId found in user context');
-    }
-
-    // Data isolation: Only show users belonging to the same admin
-    // BUT: If a company is selected, show ALL users from that company regardless of who created them
+    // Apply company/branch context filtering
     if (req.user?.role === 'SUPERADMIN') {
-      // SuperAdmin can see all users (but still filtered by company if selected)
-    } else if (req.user?.selectedCompanyId) {
-      // When a company is selected, show all users from that company
-      // Don't apply createdBy filter - show all users in the selected company
-      console.log('🏢 Company selected - showing all users from selected company, ignoring createdBy filter');
-    } else if (req.user?.createdBy) {
-      // Only apply createdBy filter when no company is selected
-      where.createdBy = req.user.createdBy;
-    } else {
-      // If no createdBy, show only users created by this user
-      where.createdBy = req.user?.id;
+      // SuperAdmin can see all users
+      if (selectedCompanyId) {
+        where.branch = { companyId: selectedCompanyId };
+      }
+      if (selectedBranchId) {
+        where.branchId = selectedBranchId;
+      }
+    } else if (req.user?.role === 'ADMIN') {
+      // Admin users - use header context
+      if (selectedBranchId) {
+        where.branchId = selectedBranchId;
+        console.log('🏢 Admin filtering users by selected branch:', selectedBranchId);
+      } else if (selectedCompanyId) {
+        where.branch = { companyId: selectedCompanyId };
+        console.log('🏢 Admin filtering users by selected company:', selectedCompanyId);
+      } else {
+        // No context - show users created by this admin
+        where.createdBy = req.user?.id;
+      }
+    } else if (req.user?.role === 'MANAGER' || req.user?.role === 'CASHIER') {
+      // Manager/Cashier - only see users in their branch
+      if (req.user?.branchId) {
+        where.branchId = req.user.branchId;
+      } else {
+        where.branchId = 'no-access';
+      }
     }
 
     if (isActive !== 'all') {
       where.isActive = isActive === 'true' || isActive === true;
     }
 
+    // Override with query param if provided
     if (branchId) {
       where.branchId = branchId;
     }
@@ -95,9 +104,9 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { username: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } }
+        { name: { contains: search } },
+        { username: { contains: search } },
+        { email: { contains: search } }
       ];
     }
 
@@ -151,6 +160,7 @@ export const getUsers = async (req: AuthRequest, res: Response) => {
 
 export const getUser = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     // Build where clause with data isolation
@@ -203,6 +213,7 @@ export const getUser = async (req: AuthRequest, res: Response) => {
 
 export const createUser = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('=== CREATE USER REQUEST ===');
     console.log('Request body:', req.body);
     console.log('User context:', { role: req.user?.role, createdBy: req.user?.createdBy, branchId: req.user?.branchId });
@@ -219,20 +230,43 @@ export const createUser = async (req: AuthRequest, res: Response) => {
 
     const userData: CreateUserData = req.body;
 
-    // Check if user already exists
-    const existingUser = await prisma.user.findFirst({
+    // Check if user already exists in the same branch
+    // Allow same username/email in different branches
+    const branchId = userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null;
+
+    // Check for duplicate username in the same branch
+    const existingUserByUsername = await prisma.user.findFirst({
       where: {
-        OR: [
-          { username: userData.username },
-          { email: userData.email }
-        ]
+        username: userData.username,
+        branchId: branchId
       }
     });
 
-    if (existingUser) {
+    if (existingUserByUsername) {
+      console.log('❌ User with username already exists in this branch:', userData.username);
       return res.status(400).json({
         success: false,
-        message: 'User with this username or email already exists'
+        message: `User with username "${userData.username}" already exists in this branch`,
+        field: 'username',
+        code: 'USER_EXISTS'
+      });
+    }
+
+    // Check for duplicate email in the same branch
+    const existingUserByEmail = await prisma.user.findFirst({
+      where: {
+        email: userData.email,
+        branchId: branchId
+      }
+    });
+
+    if (existingUserByEmail) {
+      console.log('❌ User with email already exists in this branch:', userData.email);
+      return res.status(400).json({
+        success: false,
+        message: `User with email "${userData.email}" already exists in this branch`,
+        field: 'email',
+        code: 'USER_EXISTS'
       });
     }
 
@@ -258,14 +292,47 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     const currentUserAdminId = req.user?.createdBy;
     const currentUserCompanyId = req.user?.companyId;
 
-    // Create user
+    // For data isolation: createdBy should be the admin who created this user
+    // If current user is an ADMIN with no createdBy (self-created), use their own ID
+    // Otherwise, use the createdBy chain
+    const createdByValue = currentUserAdminId || currentUserId;
+
+    // Get companyId from branch if not set on current user
+    let companyIdValue = currentUserCompanyId;
+    const branchIdValue = userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null;
+
+    // If we have a branch but no company, get the company from the branch
+    if (branchIdValue && !companyIdValue) {
+      const branch = await prisma.branch.findUnique({
+        where: { id: branchIdValue },
+        select: { companyId: true }
+      });
+      if (branch) {
+        companyIdValue = branch.companyId;
+      }
+    }
+
+    console.log('Creating user with isolation data:', {
+      createdBy: createdByValue,
+      companyId: companyIdValue,
+      branchId: branchIdValue,
+      currentUserId,
+      currentUserAdminId,
+      currentUserCompanyId
+    });
+
+    // Create user - explicitly list fields to avoid spreading unknown fields
     const user = await prisma.user.create({
       data: {
-        ...userData,
+        username: userData.username,
+        email: userData.email,
         password: hashedPassword,
-        createdBy: currentUserAdminId || currentUserId, // Set createdBy for data isolation
-        companyId: currentUserCompanyId, // Set companyId for data isolation
-        branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null
+        name: userData.name,
+        role: userData.role,
+        branchId: branchIdValue,
+        companyId: companyIdValue, // Set companyId for data isolation
+        createdBy: createdByValue, // Set createdBy for data isolation
+        isActive: true // New users are active by default when created by admin
       },
       include: {
         branch: {
@@ -284,17 +351,36 @@ export const createUser = async (req: AuthRequest, res: Response) => {
       success: true,
       data: userWithoutPassword
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Create user error:', error);
+    console.error('Error details:', {
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta
+    });
+
+    // Handle specific Prisma errors
+    if (error?.code === 'P2002') {
+      // Unique constraint violation
+      const field = error?.meta?.target?.[0] || 'field';
+      return res.status(400).json({
+        success: false,
+        message: `A user with this ${field} already exists`,
+        code: 'USER_EXISTS',
+        field
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: error?.message || 'Internal server error'
     });
   }
 };
 
 export const updateUser = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateUserSchema.validate(req.body);
 
@@ -377,6 +463,7 @@ export const updateUser = async (req: Request, res: Response) => {
 
 export const deleteUser = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const user = await prisma.user.findUnique({
@@ -410,6 +497,7 @@ export const deleteUser = async (req: Request, res: Response) => {
 
 export const activateUser = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { isActive } = req.body;
 

@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEmployeeStats = exports.deleteEmployee = exports.updateEmployee = exports.createEmployee = exports.getEmployee = exports.getEmployees = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createEmployeeSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     email: joi_1.default.string().email().required(),
@@ -38,7 +37,7 @@ const updateEmployeeSchema = joi_1.default.object({
     emergencyContactRelation: joi_1.default.string().allow(''),
     isActive: joi_1.default.boolean()
 });
-const generateEmployeeId = async () => {
+const generateEmployeeId = async (prisma) => {
     const lastEmployee = await prisma.employee.findFirst({
         orderBy: { employeeId: 'desc' }
     });
@@ -51,6 +50,7 @@ const generateEmployeeId = async () => {
 };
 const getEmployees = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', status = '', branchId = '', isActive = true } = req.query;
         console.log('Getting employees with params:', { page, limit, search, status, branchId, isActive });
         const skip = (Number(page) - 1) * Number(limit);
@@ -68,10 +68,10 @@ const getEmployees = async (req, res) => {
         }
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } },
-                { employeeId: { contains: search, mode: 'insensitive' } },
-                { position: { contains: search, mode: 'insensitive' } }
+                { name: { contains: search } },
+                { email: { contains: search } },
+                { employeeId: { contains: search } },
+                { position: { contains: search } }
             ];
         }
         const [employees, total] = await Promise.all([
@@ -116,6 +116,7 @@ const getEmployees = async (req, res) => {
 exports.getEmployees = getEmployees;
 const getEmployee = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const employee = await prisma.employee.findUnique({
             where: { id },
@@ -150,6 +151,7 @@ const getEmployee = async (req, res) => {
 exports.getEmployee = getEmployee;
 const createEmployee = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Creating employee with data:', req.body);
         const { error } = createEmployeeSchema.validate(req.body);
         if (error) {
@@ -179,7 +181,7 @@ const createEmployee = async (req, res) => {
                 message: 'Branch not found'
             });
         }
-        const employeeId = await generateEmployeeId();
+        const employeeId = await generateEmployeeId(prisma);
         const employee = await prisma.employee.create({
             data: {
                 ...employeeData,
@@ -213,6 +215,7 @@ const createEmployee = async (req, res) => {
 exports.createEmployee = createEmployee;
 const updateEmployee = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateEmployeeSchema.validate(req.body);
         if (error) {
@@ -286,6 +289,7 @@ const updateEmployee = async (req, res) => {
 exports.updateEmployee = updateEmployee;
 const deleteEmployee = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const existingEmployee = await prisma.employee.findUnique({
             where: { id }
@@ -316,6 +320,7 @@ const deleteEmployee = async (req, res) => {
 exports.deleteEmployee = deleteEmployee;
 const getEmployeeStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId } = req.query;
         const where = { isActive: true };
         if (branchId) {

@@ -6,9 +6,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.notifyInventoryChange = exports.notifyCustomerChange = exports.notifyRefundChange = exports.notifySaleChange = exports.notifyProductChange = exports.notifyAdminGroup = exports.notifyUserReactivation = exports.notifyUserDeactivation = void 0;
 const express_1 = require("express");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const router = (0, express_1.Router)();
-const prisma = new client_1.PrismaClient();
 const activeConnections = new Map();
 const adminConnections = new Map();
 const authenticateSSE = async (req) => {
@@ -18,6 +17,7 @@ const authenticateSSE = async (req) => {
             return null;
         }
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
+        const prisma = await (0, db_util_1.getPrisma)();
         const user = await prisma.user.findUnique({
             where: { id: decoded.userId },
             select: {

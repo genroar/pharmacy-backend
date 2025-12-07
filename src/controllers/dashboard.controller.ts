@@ -1,11 +1,10 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest, buildAdminWhereClause, buildBranchWhereClause } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
 
 export const getDashboardStats = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId = '' } = req.query;
     const userId = (req as any).user?.id;
 
@@ -22,14 +21,15 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Get sales stats for today
+    // Get sales stats for today (excluding REFUNDED sales)
     const todaySales = await prisma.sale.aggregate({
       where: {
         ...where,
         createdAt: {
           gte: today,
           lt: tomorrow
-        }
+        },
+        status: { not: 'REFUNDED' } // Exclude refunded sales from totals
       },
       _sum: {
         totalAmount: true,
@@ -41,9 +41,12 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    // Get total sales stats
+    // Get total sales stats (excluding REFUNDED sales)
     const totalSales = await prisma.sale.aggregate({
-      where,
+      where: {
+        ...where,
+        status: { not: 'REFUNDED' } // Exclude refunded sales from totals
+      },
       _sum: {
         totalAmount: true,
         subtotal: true,
@@ -159,6 +162,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
 
 export const getSalesChart = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       branchId = '',
       period = '7d', // 7d, 30d, 90d, 1y
@@ -213,7 +217,7 @@ export const getSalesChart = async (req: Request, res: Response) => {
 
       // Group by date
       const dailyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const dateKey = sale.createdAt.toISOString().split('T')[0];
         if (!dailyData[dateKey]) {
           dailyData[dateKey] = { total: 0, count: 0 };
@@ -241,7 +245,7 @@ export const getSalesChart = async (req: Request, res: Response) => {
       });
 
       const weeklyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const weekStart = new Date(sale.createdAt);
         weekStart.setDate(weekStart.getDate() - weekStart.getDay());
         const weekKey = weekStart.toISOString().split('T')[0];
@@ -272,7 +276,7 @@ export const getSalesChart = async (req: Request, res: Response) => {
       });
 
       const monthlyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const monthKey = `${sale.createdAt.getFullYear()}-${String(sale.createdAt.getMonth() + 1).padStart(2, '0')}`;
         if (!monthlyData[monthKey]) {
           monthlyData[monthKey] = { total: 0, count: 0 };
@@ -308,6 +312,7 @@ export const getSalesChart = async (req: Request, res: Response) => {
 // Get admin dashboard stats (all branches)
 export const getAdminDashboardStats = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     // Get total revenue across all branches
     const totalRevenue = await prisma.sale.aggregate({
       _sum: {
@@ -388,12 +393,12 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
 
     // Filter products with low stock based on batch quantities
     const filteredLowStockProducts = lowStockProducts.filter(product => {
-      const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      const totalStock = product.batches.reduce((sum: number, batch: any) => sum + batch.quantity, 0);
       return totalStock <= product.minStock;
-    }).map(product => ({
+    }).map((product: any) => ({
       id: product.id,
       name: product.name,
-      stock: product.batches.reduce((sum, batch) => sum + batch.quantity, 0),
+      stock: product.batches.reduce((sum: number, batch: any) => sum + batch.quantity, 0),
       minStock: product.minStock,
       branch: product.branch
     }));
@@ -418,12 +423,12 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
       }
     });
 
-    const branchStats = branchPerformance.map(branch => ({
+    const branchStats = branchPerformance.map((branch: any) => ({
       id: branch.id,
       name: branch.name,
       users: branch._count.users,
       sales: branch._count.sales,
-      revenue: branch.sales.reduce((sum, sale) => sum + sale.totalAmount, 0)
+      revenue: branch.sales.reduce((sum: number, sale: any) => sum + sale.totalAmount, 0)
     }));
 
     // Get recent users who made purchases
@@ -467,7 +472,7 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
         recentSales,
         lowStockProducts: filteredLowStockProducts,
         branchPerformance: branchStats,
-        recentUsers: recentUsers.map(user => ({
+        recentUsers: recentUsers.map((user: any) => ({
           id: user.id,
           name: user.name,
           username: user.username,
@@ -489,6 +494,7 @@ export const getAdminDashboardStats = async (req: Request, res: Response) => {
 // Get top selling products
 export const getTopSellingProducts = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId = '', limit = 10 } = req.query;
 
     const where: any = {};
@@ -517,7 +523,7 @@ export const getTopSellingProducts = async (req: Request, res: Response) => {
     });
 
     // Get product details
-    const productIds = topProducts.map(item => item.productId);
+    const productIds = topProducts.map((item: any) => item.productId);
     const products = await prisma.product.findMany({
       where: {
         id: {
@@ -543,9 +549,9 @@ export const getTopSellingProducts = async (req: Request, res: Response) => {
       }
     });
 
-    const productMap = new Map(products.map(p => [p.id, p]));
+    const productMap = new Map(products.map((p: any) => [p.id, p]));
 
-    const result = topProducts.map(item => {
+    const result = topProducts.map((item: any) => {
       const product = productMap.get(item.productId);
       return {
         productId: item.productId,
@@ -575,6 +581,7 @@ export const getTopSellingProducts = async (req: Request, res: Response) => {
 // Get sales by payment method
 export const getSalesByPaymentMethod = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId = '' } = req.query;
 
     const where: any = {};

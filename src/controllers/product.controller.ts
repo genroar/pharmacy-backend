@@ -2,14 +2,12 @@
 
 
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { CreateProductData, UpdateProductData, StockMovementData } from '../models/product.model';
 import { validate } from '../middleware/validation.middleware';
 import { AuthRequest, buildAdminWhereClause, buildBranchWhereClause } from '../middleware/auth.middleware';
 import { notifyProductChange, notifyInventoryChange } from '../routes/sse.routes';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Utility function to convert BigInt and Date values to strings for JSON serialization
 function serializeBigInt(obj: any): any {
@@ -82,6 +80,7 @@ const updateProductSchema = Joi.object({
 
 export const getProducts = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -120,9 +119,10 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search } },
         { barcode: { contains: search } },
-        { description: { contains: search, mode: 'insensitive' } }
+        { description: { contains: search } },
+        { formula: { contains: search } } // Search by formula/composition
       ];
     }
 
@@ -212,6 +212,7 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
 
 export const getProduct = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const product = await prisma.product.findUnique({
@@ -254,6 +255,7 @@ export const getProduct = async (req: AuthRequest, res: Response) => {
 
 export const createProduct = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('=== CREATE PRODUCT REQUEST ===');
     console.log('Request body:', req.body);
     console.log('Request headers:', req.headers);
@@ -401,6 +403,7 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
 
 export const updateProduct = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateProductSchema.validate(req.body);
 
@@ -493,6 +496,7 @@ export const updateProduct = async (req: AuthRequest, res: Response) => {
 
 export const deleteProduct = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const product = await prisma.product.findUnique({
@@ -557,6 +561,7 @@ export const deleteProduct = async (req: AuthRequest, res: Response) => {
 
 export const updateStock = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { type, quantity, reason, reference }: StockMovementData = req.body;
 
@@ -596,6 +601,7 @@ export const updateStock = async (req: AuthRequest, res: Response) => {
 // Bulk import products - Fixed TypeScript errors
 export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('=== BULK IMPORT REQUEST RECEIVED ===');
     console.log('Request body:', req.body);
     console.log('Request headers:', req.headers);
@@ -1009,6 +1015,7 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
 // Get all products including inactive ones - for debugging
 export const getAllProducts = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const products = await prisma.product.findMany({
       include: {
         category: true,
@@ -1042,6 +1049,7 @@ export const getAllProducts = async (req: AuthRequest, res: Response) => {
 // Activate all products - temporary fix
 export const activateAllProducts = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const result = await prisma.product.updateMany({
       where: {},
       data: {
@@ -1068,6 +1076,7 @@ export const activateAllProducts = async (req: AuthRequest, res: Response) => {
 // Bulk delete products
 export const bulkDeleteProducts = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { productIds } = req.body;
 
     if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
@@ -1145,6 +1154,7 @@ export const bulkDeleteProducts = async (req: AuthRequest, res: Response) => {
 // Get stock movements with date filtering
 export const getStockMovements = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 50,

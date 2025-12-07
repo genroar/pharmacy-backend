@@ -1,8 +1,10 @@
-import { Request, Response } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { AuthRequest, buildBranchWhereClause } from '../middleware/auth.middleware';
+// CRITICAL: Import database initialization FIRST to ensure DATABASE_URL is set
+import '../config/database.init';
 
-const prisma = new PrismaClient();
+import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
+import { AuthRequest, buildBranchWhereClause } from '../middleware/auth.middleware';
 
 // Helper function to get week number
 function getWeekNumber(date: Date): number {
@@ -15,6 +17,7 @@ function getWeekNumber(date: Date): number {
 
 export const getSalesReport = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       startDate = '',
       endDate = '',
@@ -74,9 +77,12 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    // Exclude refunded sales from reports
+    where.status = { not: 'REFUNDED' };
+
     console.log('Sales report where clause:', where);
 
-    // Get sales summary
+    // Get sales summary (excluding refunded sales)
     const salesSummary = await prisma.sale.aggregate({
       where,
       _sum: {
@@ -142,7 +148,7 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
 
     // Get product details for top products
     const topProductsWithDetails = await Promise.all(
-      topProducts.map(async (item) => {
+      topProducts.map(async (item: any) => {
         const product = await prisma.product.findUnique({
           where: { id: item.productId },
           select: {
@@ -192,7 +198,7 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       });
 
       const monthlyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const monthKey = `${sale.createdAt.getFullYear()}-${String(sale.createdAt.getMonth() + 1).padStart(2, '0')}`;
         if (!monthlyData[monthKey]) {
           monthlyData[monthKey] = { total: 0, count: 0 };
@@ -220,7 +226,7 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       });
 
       const weeklyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const date = new Date(sale.createdAt);
         const year = date.getFullYear();
         const weekNumber = getWeekNumber(date);
@@ -252,7 +258,7 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       });
 
       const yearlyData: { [key: string]: { total: number; count: number } } = {};
-      sales.forEach(sale => {
+      sales.forEach((sale: any) => {
         const year = sale.createdAt.getFullYear().toString();
 
         if (!yearlyData[year]) {
@@ -301,6 +307,7 @@ export const getInventoryReport = async (req: AuthRequest, res: Response) => {
   try {
     const { branchId = '', lowStock = false } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Inventory report request:', { branchId, lowStock });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -335,7 +342,7 @@ export const getInventoryReport = async (req: AuthRequest, res: Response) => {
 
     // Get category details
     const categoriesWithDetails = await Promise.all(
-      productsByCategory.map(async (item) => {
+      productsByCategory.map(async (item: any) => {
         const category = await prisma.category.findUnique({
           where: { id: item.categoryId },
           select: {
@@ -392,6 +399,7 @@ export const getCustomerReport = async (req: AuthRequest, res: Response) => {
       vip = false
     } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Customer report request:', { startDate, endDate, branchId, vip });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -504,6 +512,7 @@ export const getProductPerformanceReport = async (req: AuthRequest, res: Respons
       categoryId = ''
     } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Product performance report request:', { startDate, endDate, branchId, categoryId });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -547,7 +556,7 @@ export const getProductPerformanceReport = async (req: AuthRequest, res: Respons
 
     // Get product details
     const productsWithDetails = await Promise.all(
-      productPerformance.map(async (item) => {
+      productPerformance.map(async (item: any) => {
         const product = await prisma.product.findUnique({
           where: { id: item.productId },
           select: {
@@ -591,7 +600,7 @@ export const getProductPerformanceReport = async (req: AuthRequest, res: Respons
 
     // Get category details for performance
     const categoryPerformance = await Promise.all(
-      performanceByCategory.map(async (item) => {
+      performanceByCategory.map(async (item: any) => {
         const product = await prisma.product.findUnique({
           where: { id: item.productId },
           select: {
@@ -613,7 +622,7 @@ export const getProductPerformanceReport = async (req: AuthRequest, res: Respons
     const categoryStats: { [key: string]: { quantity: number; revenue: number; count: number } } = {};
     console.log('Category performance data:', categoryPerformance);
 
-    categoryPerformance.forEach(item => {
+    categoryPerformance.forEach((item: any) => {
       const category = item.category;
       if (!categoryStats[category]) {
         categoryStats[category] = { quantity: 0, revenue: 0, count: 0 };
@@ -627,7 +636,7 @@ export const getProductPerformanceReport = async (req: AuthRequest, res: Respons
 
     // Calculate summary statistics
     const totalProducts = productsWithDetails.length;
-    const totalRevenue = productsWithDetails.reduce((sum, item) => sum + (item._sum?.totalPrice || 0), 0);
+    const totalRevenue = productsWithDetails.reduce((sum: number, item: any) => sum + (item._sum?.totalPrice || 0), 0);
     const avgRevenue = totalProducts > 0 ? totalRevenue / totalProducts : 0;
     const topProduct = productsWithDetails.length > 0 ? {
       name: productsWithDetails[0].product?.name || 'Unknown',
@@ -664,6 +673,7 @@ export const getTopSellingProducts = async (req: AuthRequest, res: Response) => 
   try {
     const { branchId = '', limit = 10 } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Top selling products request:', { branchId, limit });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -697,7 +707,7 @@ export const getTopSellingProducts = async (req: AuthRequest, res: Response) => 
 
     // Get product details
     const productsWithDetails = await Promise.all(
-      topProducts.map(async (item) => {
+      topProducts.map(async (item: any) => {
         const product = await prisma.product.findUnique({
           where: { id: item.productId },
           select: {
@@ -739,6 +749,7 @@ export const getSalesByPaymentMethod = async (req: AuthRequest, res: Response) =
   try {
     const { branchId = '' } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Sales by payment method request:', { branchId });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -784,6 +795,7 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
   try {
     const { branchId = '' } = req.query;
 
+    const prisma = await getPrisma();
     console.log('Dashboard data request:', { branchId });
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
 
@@ -825,10 +837,11 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       createdAt: {
         gte: today,
         lt: tomorrow
-      }
+      },
+      status: { not: 'REFUNDED' } // Exclude refunded sales
     };
 
-    // Get today's sales summary
+    // Get today's sales summary (excluding refunded)
     const todaySales = await prisma.sale.aggregate({
       where: todayWhere,
       _sum: {
@@ -853,7 +866,8 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       createdAt: {
         gte: yesterday,
         lt: yesterdayEnd
-      }
+      },
+      status: { not: 'REFUNDED' } // Exclude refunded sales
     };
 
     const yesterdaySales = await prisma.sale.aggregate({
@@ -866,7 +880,7 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    // Get this month's sales
+    // Get this month's sales (excluding refunded)
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
@@ -875,7 +889,8 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       createdAt: {
         gte: startOfMonth,
         lte: endOfMonth
-      }
+      },
+      status: { not: 'REFUNDED' } // Exclude refunded sales
     };
 
     const monthSales = await prisma.sale.aggregate({
@@ -888,12 +903,13 @@ export const getDashboardData = async (req: AuthRequest, res: Response) => {
       }
     });
 
-    // Get last month's sales for comparison
+    // Get last month's sales for comparison (excluding refunded)
     const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
     const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
 
     const lastMonthWhere = {
       ...where,
+      status: { not: 'REFUNDED' }, // Exclude refunded sales
       createdAt: {
         gte: startOfLastMonth,
         lte: endOfLastMonth

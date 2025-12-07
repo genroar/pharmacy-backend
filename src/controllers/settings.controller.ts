@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 const updateSettingsSchema = Joi.object({
   defaultTax: Joi.number().min(0).max(100).required(),
@@ -22,6 +20,7 @@ const updateSettingsSchema = Joi.object({
 
 export const getSettings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const createdBy = req.user?.createdBy || req.user?.id;
 
     if (!createdBy) {
@@ -79,6 +78,7 @@ export const getSettings = async (req: AuthRequest, res: Response): Promise<void
 
 export const updateSettings = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const createdBy = req.user?.createdBy || req.user?.id;
 
     if (!createdBy) {
@@ -102,7 +102,7 @@ export const updateSettings = async (req: AuthRequest, res: Response): Promise<v
     const settingsData = req.body;
 
     // Use transaction to update all settings
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       for (const [key, value] of Object.entries(settingsData)) {
         await tx.settings.upsert({
           where: {
@@ -140,6 +140,7 @@ export const updateSettings = async (req: AuthRequest, res: Response): Promise<v
 
 export const getTaxRate = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const createdBy = req.user?.createdBy || req.user?.id;
 
     if (!createdBy) {

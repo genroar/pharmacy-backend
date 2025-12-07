@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Helper function to serialize BigInt and Date values
 const serializeBigInt = (obj: any): any => {
@@ -134,6 +132,7 @@ const updateBatchSchema = Joi.object({
 // Get low stock batches for order purchase
 export const getLowStockBatches = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('🔍 Get low stock batches request:', req.query);
     const { page = 1, limit = 50, search = '', branchId } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -152,28 +151,64 @@ export const getLowStockBatches = async (req: any, res: Response) => {
       }
     }
 
-    if (!targetBranchId || !targetCompanyId) {
+    // If we have branchId but no companyId, get companyId from the branch
+    if (targetBranchId && !targetCompanyId) {
+      const branch = await prisma.branch.findUnique({
+        where: { id: targetBranchId },
+        select: { companyId: true }
+      });
+      if (branch?.companyId) {
+        targetCompanyId = branch.companyId;
+        console.log('🔍 Got companyId from branch for low stock:', targetCompanyId);
+      }
+    }
+
+    // For ADMIN/SUPERADMIN users without a specific branch selected,
+    // they can view all branches data for the selected company
+    if (!targetBranchId && (req.user?.role === 'ADMIN' || req.user?.role === 'SUPERADMIN')) {
+      // If no company either, we need at least a company context
+      if (!targetCompanyId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Company context required. Please select a company first.'
+        });
+      }
+      console.log('🔍 ADMIN/SUPERADMIN viewing all branches for company:', targetCompanyId);
+    } else if (!targetBranchId || !targetCompanyId) {
+      // For other roles (MANAGER/CASHIER), branch is required
       return res.status(400).json({
         success: false,
         message: 'Branch and company context required'
       });
     }
 
+    // Build the where clause - branchId is optional for ADMIN/SUPERADMIN
+    const productWhere: any = {
+      companyId: targetCompanyId,
+      isActive: true
+    };
+
+    if (targetBranchId) {
+      productWhere.branchId = targetBranchId;
+    }
+
+    // Build batches where clause - branchId is optional for ADMIN/SUPERADMIN
+    const batchesWhere: any = {
+      companyId: targetCompanyId,
+      isActive: true,
+      quantity: { gt: 0 }
+    };
+
+    if (targetBranchId) {
+      batchesWhere.branchId = targetBranchId;
+    }
+
     // Get products with their batches and min stock requirements
     const products = await prisma.product.findMany({
-      where: {
-        branchId: targetBranchId,
-        companyId: targetCompanyId,
-        isActive: true
-      },
+      where: productWhere,
       include: {
         batches: {
-          where: {
-            branchId: targetBranchId,
-            companyId: targetCompanyId,
-            isActive: true,
-            quantity: { gt: 0 }
-          },
+          where: batchesWhere,
           orderBy: { expireDate: 'asc' }
         },
         category: {
@@ -304,8 +339,9 @@ export const getLowStockBatches = async (req: any, res: Response) => {
 // Get all batches
 export const getBatches = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('🔍 Get batches request:', req.query);
-    console.log('🔍 User context:', { userId: req.user?.id, role: req.user?.role, branchId: req.user?.branchId });
+    console.log('🔍 User context:', { userId: req.user?.id, role: req.user?.role, branchId: req.user?.branchId, companyId: req.user?.companyId });
     const { page = 1, limit = 50, search = '', isActive, isReported, productId } = req.query;
     const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
 
@@ -323,6 +359,18 @@ export const getBatches = async (req: any, res: Response) => {
       // Use the user's assigned company if no specific company is selected
       if (!targetCompanyId) {
         targetCompanyId = req.user?.companyId;
+      }
+    }
+
+    // If we have branchId but no companyId, get companyId from the branch
+    if (targetBranchId && !targetCompanyId) {
+      const branch = await prisma.branch.findUnique({
+        where: { id: targetBranchId },
+        select: { companyId: true }
+      });
+      if (branch?.companyId) {
+        targetCompanyId = branch.companyId;
+        console.log('🔍 Got companyId from branch:', targetCompanyId);
       }
     }
 
@@ -351,10 +399,11 @@ export const getBatches = async (req: any, res: Response) => {
 
     if (search) {
       where.OR = [
-        { batchNo: { contains: search, mode: 'insensitive' } },
-        { supplierName: { contains: search, mode: 'insensitive' } },
-        { supplierInvoiceNo: { contains: search, mode: 'insensitive' } },
-        { product: { name: { contains: search, mode: 'insensitive' } } },
+        { batchNo: { contains: search } },
+        { supplierName: { contains: search } },
+        { supplierInvoiceNo: { contains: search } },
+        { product: { name: { contains: search } } },
+        { product: { formula: { contains: search } } } // Search by product formula
       ];
     }
 
@@ -432,6 +481,7 @@ export const getBatches = async (req: any, res: Response) => {
 // Get batch by ID
 export const getBatchById = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const batch = await prisma.batch.findUnique({
@@ -478,6 +528,7 @@ export const getBatchById = async (req: any, res: Response) => {
 // Create new batch
 export const createBatch = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('🔍 Create batch request body:', req.body);
     const { error, value } = createBatchSchema.validate(req.body);
     if (error) {
@@ -614,6 +665,7 @@ export const createBatch = async (req: any, res: Response) => {
 // Update batch
 export const updateBatch = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     console.log('🔍 Update batch request body:', req.body);
     const { error, value } = updateBatchSchema.validate(req.body);
@@ -703,6 +755,7 @@ export const updateBatch = async (req: any, res: Response) => {
 // Restock batch
 export const restockBatch = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { quantity, notes } = req.body;
 
@@ -776,6 +829,7 @@ export const restockBatch = async (req: any, res: Response) => {
 // Delete batch
 export const deleteBatch = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const batch = await prisma.batch.findUnique({
@@ -809,6 +863,7 @@ export const deleteBatch = async (req: any, res: Response) => {
 // Get near expiry batches
 export const getNearExpiryBatches = async (req: any, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { days = 30 } = req.query;
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Start of today

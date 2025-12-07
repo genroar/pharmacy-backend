@@ -1,17 +1,16 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createCategorySchema = Joi.object({
   name: Joi.string().required(),
-  description: Joi.string().allow(''),
+  description: Joi.string().allow('', null),
   type: Joi.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL').default('GENERAL'),
   color: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
-  branchId: Joi.string().optional()
+  branchId: Joi.string().allow('', null).optional(), // Allow empty string and null
+  companyId: Joi.string().allow('', null).optional() // Allow empty string and null
 });
 
 const updateCategorySchema = Joi.object({
@@ -23,6 +22,7 @@ const updateCategorySchema = Joi.object({
 
 export const getCategories = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { page = 1, limit = 50, search = '', branchId = '' } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -145,8 +145,8 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
       if (finalWhere.AND) {
         finalWhere.AND.push({
           OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { description: { contains: search, mode: 'insensitive' } }
+            { name: { contains: search } },
+            { description: { contains: search } }
           ]
         });
       } else if (finalWhere.OR) {
@@ -156,16 +156,16 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
             { OR: finalWhere.OR },
             {
               OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { description: { contains: search, mode: 'insensitive' } }
+                { name: { contains: search } },
+                { description: { contains: search } }
               ]
             }
           ]
         };
       } else {
         finalWhere.OR = [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } }
+          { name: { contains: search } },
+          { description: { contains: search } }
         ];
       }
     }
@@ -219,6 +219,7 @@ export const getCategories = async (req: AuthRequest, res: Response) => {
 
 export const getCategory = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     // Build where clause with data isolation
@@ -288,6 +289,7 @@ export const getCategory = async (req: AuthRequest, res: Response) => {
 
 export const createCategory = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('=== CREATE CATEGORY REQUEST ===');
     console.log('Request body:', req.body);
     console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
@@ -302,15 +304,39 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { name, description, type, color, branchId } = req.body;
+    const { name, description, type, color, branchId, companyId } = req.body;
 
-    // Get user's branch and company info
-    const userBranchId = req.user?.branchId;
-    const userCompanyId = req.user?.companyId;
+    // Get user's branch and company info from headers or user context
+    // Priority: Request body > Headers > User context
+    const headerBranchId = req.headers['x-branch-id'] as string;
+    const headerCompanyId = req.headers['x-company-id'] as string;
+    const userBranchId = req.user?.selectedBranchId || req.user?.branchId;
+    const userCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
 
-    // Use provided branchId or user's branchId (MUST have a branchId)
-    const categoryBranchId = branchId || userBranchId;
-    const categoryCompanyId = userCompanyId;
+    // Use provided branchId (not empty), or header, or user's branchId
+    const categoryBranchId = (branchId && branchId.trim() !== '')
+      ? branchId
+      : (headerBranchId && headerBranchId.trim() !== '')
+        ? headerBranchId
+        : userBranchId;
+
+    // Use provided companyId (not empty), or header, or user's companyId
+    const categoryCompanyId = (companyId && companyId.trim() !== '')
+      ? companyId
+      : (headerCompanyId && headerCompanyId.trim() !== '')
+        ? headerCompanyId
+        : userCompanyId;
+
+    console.log('Branch/Company resolution:', {
+      providedBranchId: branchId,
+      headerBranchId,
+      userBranchId,
+      resolvedBranchId: categoryBranchId,
+      providedCompanyId: companyId,
+      headerCompanyId,
+      userCompanyId,
+      resolvedCompanyId: categoryCompanyId
+    });
 
     // Require branchId for category creation
     if (!categoryBranchId) {
@@ -389,6 +415,7 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
 
 export const updateCategory = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateCategorySchema.validate(req.body);
 
@@ -463,6 +490,7 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
 
 export const deleteCategory = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const category = await prisma.category.findUnique({

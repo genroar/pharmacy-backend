@@ -4,66 +4,77 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteSupplier = exports.updateSupplier = exports.createSupplier = exports.getSupplier = exports.getSuppliers = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createSupplierSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     contactPerson: joi_1.default.string().required(),
     phone: joi_1.default.string().required(),
-    email: joi_1.default.string().email().allow('').optional(),
-    address: joi_1.default.string().allow('').optional(),
-    manufacturerId: joi_1.default.string().allow('').optional()
+    email: joi_1.default.string().email().allow('', null).optional(),
+    address: joi_1.default.string().allow('', null).optional(),
+    manufacturerId: joi_1.default.string().allow('', null).optional()
 });
 const updateSupplierSchema = joi_1.default.object({
     name: joi_1.default.string(),
     contactPerson: joi_1.default.string(),
     phone: joi_1.default.string(),
-    email: joi_1.default.string().email().allow('').optional(),
-    address: joi_1.default.string().allow('').optional(),
-    manufacturerId: joi_1.default.string().allow('').optional(),
+    email: joi_1.default.string().email().allow('', null).optional(),
+    address: joi_1.default.string().allow('', null).optional(),
+    manufacturerId: joi_1.default.string().allow('', null).optional(),
     isActive: joi_1.default.boolean()
 });
 const getSuppliers = async (req, res) => {
     try {
-        const { page = 1, limit = 50, search = '', active = true, branchId = '', manufacturerId = '' } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
+        const { page = 1, limit = 50, search = '', active = true, manufacturerId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {};
-        if (req.user?.role === 'SUPERADMIN') {
+        const selectedCompanyId = req.headers['x-company-id'];
+        const selectedBranchId = req.headers['x-branch-id'];
+        console.log('📦 getSuppliers - Context:', {
+            role: req.user?.role,
+            userId: req.user?.id,
+            createdBy: req.user?.createdBy,
+            branchId: req.user?.branchId,
+            selectedCompanyId,
+            selectedBranchId
+        });
+        if (req.user?.role === 'SUPERADMIN' || req.user?.role === 'ADMIN') {
+            if (selectedBranchId) {
+                where.branchId = selectedBranchId;
+            }
+            else if (selectedCompanyId) {
+                where.companyId = selectedCompanyId;
+            }
+            else {
+                where.branchId = 'must-select-branch';
+            }
         }
-        else if (req.user?.role === 'ADMIN') {
-            where.createdBy = req.user.id;
-        }
-        else if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
-        }
-        else if (req.user?.id) {
-            where.createdBy = req.user.id;
+        else if (req.user?.role === 'MANAGER' || req.user?.role === 'CASHIER') {
+            if (req.user?.branchId) {
+                where.branchId = req.user.branchId;
+            }
+            else {
+                where.branchId = 'non-existent-branch-id';
+            }
         }
         else {
-            where.createdBy = 'non-existent-admin-id';
+            where.branchId = 'non-existent-branch-id';
         }
         if (active === 'true') {
             where.isActive = true;
-        }
-        if (branchId) {
-            where.products = {
-                some: {
-                    branchId: branchId
-                }
-            };
         }
         if (manufacturerId) {
             where.manufacturerId = manufacturerId;
         }
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { contactPerson: { contains: search, mode: 'insensitive' } },
+                { name: { contains: search } },
+                { contactPerson: { contains: search } },
                 { phone: { contains: search } },
-                { email: { contains: search, mode: 'insensitive' } },
-                { address: { contains: search, mode: 'insensitive' } }
+                { email: { contains: search } },
+                { address: { contains: search } }
             ];
         }
         const [suppliers, total] = await Promise.all([
@@ -113,6 +124,7 @@ const getSuppliers = async (req, res) => {
 exports.getSuppliers = getSuppliers;
 const getSupplier = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const where = { id };
         if (req.user?.role === 'SUPERADMIN') {
@@ -168,6 +180,7 @@ const getSupplier = async (req, res) => {
 exports.getSupplier = getSupplier;
 const createSupplier = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('🔍 Create supplier request body:', req.body);
         const { error } = createSupplierSchema.validate(req.body);
         if (error) {
@@ -179,12 +192,43 @@ const createSupplier = async (req, res) => {
             });
         }
         const { name, contactPerson, phone, email, address, manufacturerId } = req.body;
+        const selectedCompanyId = req.headers['x-company-id'];
+        const selectedBranchId = req.headers['x-branch-id'];
+        let branchId = selectedBranchId || req.user?.branchId;
+        let companyId = selectedCompanyId || req.user?.companyId;
+        if (branchId && !companyId) {
+            const branch = await prisma.branch.findUnique({
+                where: { id: branchId },
+                select: { companyId: true }
+            });
+            companyId = branch?.companyId || undefined;
+        }
+        if (!branchId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Branch is required. Please select a branch first.'
+            });
+        }
+        const existingSupplier = await prisma.supplier.findFirst({
+            where: {
+                name: name,
+                branchId: branchId
+            }
+        });
+        if (existingSupplier) {
+            return res.status(400).json({
+                success: false,
+                message: 'Supplier with this name already exists in this branch'
+            });
+        }
         const supplier = await prisma.supplier.create({
             data: {
                 name,
                 contactPerson,
                 phone,
                 manufacturerId: manufacturerId && manufacturerId.trim() !== '' ? manufacturerId : null,
+                branchId: branchId,
+                companyId: companyId,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             }
         });
@@ -204,6 +248,7 @@ const createSupplier = async (req, res) => {
 exports.createSupplier = createSupplier;
 const updateSupplier = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         console.log('🔍 Update supplier request body:', req.body);
         const { error } = updateSupplierSchema.validate(req.body);
@@ -263,6 +308,7 @@ const updateSupplier = async (req, res) => {
 exports.updateSupplier = updateSupplier;
 const deleteSupplier = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         console.log('🔍 Delete supplier ID:', id);
         const where = { id };

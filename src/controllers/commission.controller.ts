@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const calculateCommissionSchema = Joi.object({
@@ -23,6 +21,7 @@ const updateCommissionSchema = Joi.object({
 // Calculate commission for an employee
 export const calculateCommission = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = calculateCommissionSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -189,6 +188,7 @@ export const calculateCommission = async (req: Request, res: Response) => {
 // Get commissions
 export const getCommissions = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -283,6 +283,7 @@ export const getCommissions = async (req: Request, res: Response) => {
 // Get commission by ID
 export const getCommission = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const commission = await prisma.commission.findUnique({
@@ -328,6 +329,7 @@ export const getCommission = async (req: Request, res: Response) => {
 // Update commission
 export const updateCommission = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateCommissionSchema.validate(req.body);
 
@@ -397,6 +399,7 @@ export const updateCommission = async (req: Request, res: Response) => {
 // Get commission statistics
 export const getCommissionStats = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId, startDate, endDate } = req.query;
 
     const where: any = {};
@@ -464,6 +467,7 @@ export const getCommissionStats = async (req: Request, res: Response) => {
 // Get employee performance summary
 export const getEmployeePerformance = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { employeeId } = req.params;
     const { startDate, endDate } = req.query;
 

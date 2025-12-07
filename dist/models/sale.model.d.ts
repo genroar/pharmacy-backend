@@ -1,11 +1,13 @@
-import { PaymentMethod, PaymentStatus, SaleStatus } from '@prisma/client';
+export type PaymentMethod = 'CASH' | 'CARD' | 'MOBILE' | 'BANK_TRANSFER';
+export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'REFUNDED';
+export type SaleStatus = 'PENDING' | 'COMPLETED' | 'CANCELLED' | 'REFUNDED';
 export interface CreateSaleData {
     customerId?: string;
     userId: string;
     branchId: string;
     items: SaleItemData[];
-    paymentMethod: PaymentMethod;
-    paymentStatus?: PaymentStatus;
+    paymentMethod: PaymentMethod | string;
+    paymentStatus?: PaymentStatus | string;
     discountAmount?: number;
     discountPercentage?: number;
     saleDate?: string;
@@ -45,9 +47,9 @@ export interface SaleResponse {
     discountAmount: number;
     discountPercentage?: number;
     totalAmount: number;
-    paymentMethod: PaymentMethod;
-    paymentStatus: PaymentStatus;
-    status: SaleStatus;
+    paymentMethod: PaymentMethod | string;
+    paymentStatus: PaymentStatus | string;
+    status: SaleStatus | string;
     saleDate?: string;
     createdAt: string;
     receiptNumber?: string;

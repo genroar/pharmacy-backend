@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTaxRate = exports.updateSettings = exports.getSettings = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const updateSettingsSchema = joi_1.default.object({
     defaultTax: joi_1.default.number().min(0).max(100).required(),
     lowStockAlert: joi_1.default.number().min(0).required(),
@@ -23,6 +22,7 @@ const updateSettingsSchema = joi_1.default.object({
 });
 const getSettings = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const createdBy = req.user?.createdBy || req.user?.id;
         if (!createdBy) {
             res.status(401).json({
@@ -73,6 +73,7 @@ const getSettings = async (req, res) => {
 exports.getSettings = getSettings;
 const updateSettings = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const createdBy = req.user?.createdBy || req.user?.id;
         if (!createdBy) {
             res.status(401).json({
@@ -129,6 +130,7 @@ const updateSettings = async (req, res) => {
 exports.updateSettings = updateSettings;
 const getTaxRate = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const createdBy = req.user?.createdBy || req.user?.id;
         if (!createdBy) {
             res.status(401).json({

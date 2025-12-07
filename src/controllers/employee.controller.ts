@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createEmployeeSchema = Joi.object({
@@ -39,15 +37,15 @@ const updateEmployeeSchema = Joi.object({
 });
 
 // Generate unique employee ID
-const generateEmployeeId = async (): Promise<string> => {
+const generateEmployeeId = async (prisma: any): Promise<string> => {
   const lastEmployee = await prisma.employee.findFirst({
     orderBy: { employeeId: 'desc' }
   });
-  
+
   if (!lastEmployee) {
     return 'EMP001';
   }
-  
+
   const lastNumber = parseInt(lastEmployee.employeeId.replace('EMP', ''));
   const newNumber = lastNumber + 1;
   return `EMP${newNumber.toString().padStart(3, '0')}`;
@@ -55,13 +53,14 @@ const generateEmployeeId = async (): Promise<string> => {
 
 export const getEmployees = async (req: Request, res: Response) => {
   try {
-    const { 
-      page = 1, 
-      limit = 10, 
-      search = '', 
-      status = '', 
+    const prisma = await getPrisma();
+    const {
+      page = 1,
+      limit = 10,
+      search = '',
+      status = '',
       branchId = '',
-      isActive = true 
+      isActive = true
     } = req.query;
 
     console.log('Getting employees with params:', { page, limit, search, status, branchId, isActive });
@@ -87,10 +86,10 @@ export const getEmployees = async (req: Request, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { employeeId: { contains: search, mode: 'insensitive' } },
-        { position: { contains: search, mode: 'insensitive' } }
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { employeeId: { contains: search } },
+        { position: { contains: search } }
       ];
     }
 
@@ -137,6 +136,7 @@ export const getEmployees = async (req: Request, res: Response) => {
 
 export const getEmployee = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const employee = await prisma.employee.findUnique({
@@ -173,8 +173,9 @@ export const getEmployee = async (req: Request, res: Response) => {
 
 export const createEmployee = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('Creating employee with data:', req.body);
-    
+
     const { error } = createEmployeeSchema.validate(req.body);
     if (error) {
       console.log('Validation error:', error.details);
@@ -212,7 +213,7 @@ export const createEmployee = async (req: Request, res: Response) => {
     }
 
     // Generate unique employee ID
-    const employeeId = await generateEmployeeId();
+    const employeeId = await generateEmployeeId(prisma);
 
     // Create employee
     const employee = await prisma.employee.create({
@@ -248,9 +249,10 @@ export const createEmployee = async (req: Request, res: Response) => {
 
 export const updateEmployee = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateEmployeeSchema.validate(req.body);
-    
+
     if (error) {
       return res.status(400).json({
         success: false,
@@ -334,6 +336,7 @@ export const updateEmployee = async (req: Request, res: Response) => {
 
 export const deleteEmployee = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     // Check if employee exists
@@ -369,6 +372,7 @@ export const deleteEmployee = async (req: Request, res: Response) => {
 
 export const getEmployeeStats = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId } = req.query;
 
     const where: any = { isActive: true };

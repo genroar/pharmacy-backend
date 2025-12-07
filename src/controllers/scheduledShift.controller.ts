@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createScheduledShiftSchema = Joi.object({
@@ -28,6 +26,7 @@ const updateScheduledShiftSchema = Joi.object({
 // Create a new scheduled shift
 export const createScheduledShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     console.log('Creating scheduled shift with data:', req.body);
 
     // Test database connection
@@ -169,6 +168,7 @@ export const createScheduledShift = async (req: Request, res: Response) => {
 // Get all scheduled shifts
 export const getScheduledShifts = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -233,7 +233,7 @@ export const getScheduledShifts = async (req: Request, res: Response) => {
     ]);
 
     // Transform the data to match frontend expectations
-    const transformedShifts = scheduledShifts.map(shift => ({
+    const transformedShifts = scheduledShifts.map((shift: any) => ({
       id: shift.id,
       name: shift.name,
       startTime: shift.startTime,
@@ -241,7 +241,7 @@ export const getScheduledShifts = async (req: Request, res: Response) => {
       date: shift.date.toISOString().split('T')[0],
       branchId: shift.branchId,
       branchName: shift.branch.name,
-      assignedUsers: shift.assignedUsers.map(su => ({
+      assignedUsers: shift.assignedUsers.map((su: any) => ({
         id: su.user.id,
         name: su.user.name,
         role: su.user.role
@@ -275,6 +275,7 @@ export const getScheduledShifts = async (req: Request, res: Response) => {
 // Get a single scheduled shift
 export const getScheduledShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const scheduledShift = await prisma.scheduledShift.findUnique({
@@ -316,7 +317,7 @@ export const getScheduledShift = async (req: Request, res: Response) => {
       date: scheduledShift.date.toISOString().split('T')[0],
       branchId: scheduledShift.branchId,
       branchName: scheduledShift.branch.name,
-      assignedUsers: scheduledShift.assignedUsers.map(su => ({
+      assignedUsers: scheduledShift.assignedUsers.map((su: any) => ({
         id: su.user.id,
         name: su.user.name,
         role: su.user.role
@@ -344,6 +345,7 @@ export const getScheduledShift = async (req: Request, res: Response) => {
 // Update a scheduled shift
 export const updateScheduledShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateScheduledShiftSchema.validate(req.body);
 
@@ -415,7 +417,7 @@ export const updateScheduledShift = async (req: Request, res: Response) => {
       date: updatedShift.date.toISOString().split('T')[0],
       branchId: updatedShift.branchId,
       branchName: updatedShift.branch.name,
-      assignedUsers: updatedShift.assignedUsers.map(su => ({
+      assignedUsers: updatedShift.assignedUsers.map((su: any) => ({
         id: su.user.id,
         name: su.user.name,
         role: su.user.role
@@ -444,6 +446,7 @@ export const updateScheduledShift = async (req: Request, res: Response) => {
 // Delete a scheduled shift
 export const deleteScheduledShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     // Check if scheduled shift exists

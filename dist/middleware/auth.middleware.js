@@ -5,8 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateResourceOwnership = exports.buildBranchWhereClauseForRelation = exports.buildBranchWhereClause = exports.buildAdminWhereClause = exports.authorize = exports.authenticate = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const client_1 = require("@prisma/client");
-const prisma = new client_1.PrismaClient();
+const db_util_1 = require("../utils/db.util");
 const authenticate = async (req, res, next) => {
     try {
         const token = req.header('Authorization')?.replace('Bearer ', '');
@@ -14,6 +13,7 @@ const authenticate = async (req, res, next) => {
             return res.status(401).json({ message: 'Access denied. No token provided.' });
         }
         const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
+        const prisma = await (0, db_util_1.getPrisma)();
         const user = await prisma.user.findUnique({
             where: { id: decoded.userId },
             select: {
@@ -23,7 +23,8 @@ const authenticate = async (req, res, next) => {
                 branchId: true,
                 companyId: true,
                 createdBy: true,
-                isActive: true
+                isActive: true,
+                sessionToken: true
             }
         });
         if (!user) {
@@ -36,6 +37,12 @@ const authenticate = async (req, res, next) => {
             return res.status(401).json({
                 message: 'Your account has been deactivated. Please contact your administrator.',
                 code: 'ACCOUNT_DEACTIVATED'
+            });
+        }
+        if (decoded.sessionToken && user.sessionToken && decoded.sessionToken !== user.sessionToken) {
+            return res.status(401).json({
+                message: 'Session expired. You have been logged out because your account was accessed from another device.',
+                code: 'SESSION_EXPIRED_ANOTHER_DEVICE'
             });
         }
         let createdBy = user.createdBy;
@@ -169,6 +176,7 @@ const validateResourceOwnership = (resourceType) => {
                     message: 'Resource ID required'
                 });
             }
+            const prisma = await (0, db_util_1.getPrisma)();
             const resource = await prisma[resourceType].findFirst({
                 where: {
                     id: resourceId,

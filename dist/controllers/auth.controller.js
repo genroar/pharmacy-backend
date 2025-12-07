@@ -4,11 +4,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateProfile = exports.changePassword = exports.getProfile = exports.register = exports.login = void 0;
+require("../config/database.init");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const client_1 = require("@prisma/client");
+const crypto_1 = __importDefault(require("crypto"));
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
+const generateSessionToken = () => {
+    return crypto_1.default.randomBytes(32).toString('hex');
+};
 const loginSchema = joi_1.default.object({
     usernameOrEmail: joi_1.default.string().required(),
     password: joi_1.default.string().required()
@@ -48,6 +52,7 @@ const login = async (req, res) => {
         }
         const { usernameOrEmail, password } = req.body;
         console.log('🔍 Login attempt - Username/Email:', usernameOrEmail);
+        const prisma = await (0, db_util_1.getPrisma)();
         const user = await prisma.user.findFirst({
             where: {
                 OR: [
@@ -86,6 +91,14 @@ const login = async (req, res) => {
             });
             return;
         }
+        const sessionToken = generateSessionToken();
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                sessionToken,
+                lastLoginAt: new Date()
+            }
+        });
         if (!process.env.JWT_SECRET) {
             throw new Error('JWT_SECRET is not defined');
         }
@@ -94,8 +107,10 @@ const login = async (req, res) => {
             username: user.username,
             role: user.role,
             branchId: user.branchId,
-            createdBy: user.createdBy
+            createdBy: user.createdBy,
+            sessionToken
         }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+        console.log('✅ Login successful for user:', usernameOrEmail);
         res.json({
             success: true,
             data: {
@@ -134,6 +149,7 @@ const register = async (req, res) => {
             return;
         }
         const { username, email, password, name, role, branchId, branchData } = req.body;
+        const prisma = await (0, db_util_1.getPrisma)();
         const processedBranchId = (branchId === '' || branchId === null || branchId === undefined) ? null : branchId;
         const existingUsername = await prisma.user.findUnique({
             where: { username }
@@ -214,30 +230,20 @@ const register = async (req, res) => {
                 }
             });
         }
-        if (!process.env.JWT_SECRET) {
-            throw new Error('JWT_SECRET is not defined');
-        }
-        const token = jsonwebtoken_1.default.sign({
-            userId: user.id,
-            username: user.username,
-            role: user.role,
-            branchId: user.branchId,
-            createdBy: user.createdBy
-        }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+        console.log('✅ Account created (pending activation):', username);
         res.status(201).json({
             success: true,
+            pendingActivation: true,
+            message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
             data: {
                 user: {
                     id: user.id,
                     username: user.username,
                     name: user.name,
                     role: user.role,
-                    branchId: user.branchId,
-                    createdBy: user.createdBy,
                     isActive: user.isActive,
                     email: user.email
-                },
-                token
+                }
             }
         });
     }
@@ -259,6 +265,7 @@ exports.register = register;
 const getProfile = async (req, res) => {
     try {
         const userId = req.user.id;
+        const prisma = await (0, db_util_1.getPrisma)();
         const user = await prisma.user.findUnique({
             where: { id: userId }
         });
@@ -300,6 +307,7 @@ const changePassword = async (req, res) => {
         }
         const userId = req.user.id;
         const { currentPassword, newPassword } = req.body;
+        const prisma = await (0, db_util_1.getPrisma)();
         const user = await prisma.user.findUnique({
             where: { id: userId }
         });
@@ -355,6 +363,7 @@ const updateProfile = async (req, res) => {
         }
         const userId = req.user.id;
         const { name, email, profileImage } = req.body;
+        const prisma = await (0, db_util_1.getPrisma)();
         if (email) {
             const existingUser = await prisma.user.findFirst({
                 where: {

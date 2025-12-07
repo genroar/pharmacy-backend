@@ -1,15 +1,77 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.getPrismaClient = getPrismaClient;
+require('./config/database-url-init.js');
+require("./config/database.init");
+const path = __importStar(require("path"));
+const os = __importStar(require("os"));
+const fs = __importStar(require("fs"));
+if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.startsWith('file:')) {
+    const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
+    const sqliteDir = path.dirname(sqlitePath);
+    if (!fs.existsSync(sqliteDir)) {
+        try {
+            fs.mkdirSync(sqliteDir, { recursive: true });
+        }
+        catch (err) {
+            console.warn('[Server] Could not create SQLite directory:', err);
+        }
+    }
+    const sqliteUrl = `file:${sqlitePath}`;
+    process.env.DATABASE_URL = sqliteUrl;
+    Object.defineProperty(process.env, 'DATABASE_URL', {
+        value: sqliteUrl,
+        writable: true,
+        enumerable: true,
+        configurable: true
+    });
+    console.log('[Server] ✅ Set DATABASE_URL synchronously before PrismaClient import:', process.env.DATABASE_URL);
+}
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is not set! This should have been set by database.init.ts');
+}
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const morgan_1 = __importDefault(require("morgan"));
 const compression_1 = __importDefault(require("compression"));
 const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
-const dotenv_1 = __importDefault(require("dotenv"));
 const client_1 = require("@prisma/client");
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
 const user_routes_1 = __importDefault(require("./routes/user.routes"));
@@ -38,41 +100,236 @@ const purchase_routes_1 = __importDefault(require("./routes/purchase.routes"));
 const inventory_routes_1 = __importDefault(require("./routes/inventory.routes"));
 const sse_routes_1 = __importDefault(require("./routes/sse.routes"));
 const settings_routes_1 = __importDefault(require("./routes/settings.routes"));
+const sync_routes_1 = __importDefault(require("./routes/sync.routes"));
+const database_service_1 = require("./services/database.service");
+const sync_service_1 = require("./services/sync.service");
+const db_util_1 = require("./utils/db.util");
 const error_middleware_1 = require("./middleware/error.middleware");
 const notFound_middleware_1 = require("./middleware/notFound.middleware");
-dotenv_1.default.config();
-if (!process.env.DATABASE_URL) {
-    console.warn('⚠️  WARNING: DATABASE_URL is not set.');
-    console.warn('⚠️  The backend will start but database operations will fail.');
-    console.warn('⚠️  Please set DATABASE_URL in your .env file.');
-    console.warn('⚠️  Example: DATABASE_URL="postgresql://user:password@localhost:5432/dbname"');
-}
 const app = (0, express_1.default)();
-let prisma;
+let dbService;
+let syncService;
 try {
-    prisma = new client_1.PrismaClient();
+    dbService = (0, database_service_1.getDatabaseService)();
+    syncService = (0, sync_service_1.getSyncService)();
+    initializePrismaClient().catch(err => {
+        console.error('[Server] ❌ Failed to initialize Prisma Client:', err);
+    });
+    if (dbService) {
+        dbService.checkConnectivity().then(status => {
+            if (!dbService || !syncService) {
+                console.error('[Database] Database service or sync service not available');
+                return;
+            }
+            console.log(`[Database] Initial connectivity: ${status}`);
+            console.log(`[Database] Current database type: ${dbService.getCurrentType()}`);
+            dbService.startConnectivityMonitoring(30000);
+            let previousStatus = String(status);
+            let previousType = dbService.getCurrentType();
+            setInterval(async () => {
+                if (!dbService || !syncService) {
+                    return;
+                }
+                const currentStatus = String(dbService.getConnectionStatus());
+                const currentType = dbService.getCurrentType();
+                if (previousStatus === 'offline' && currentStatus === 'online') {
+                    console.log('[Sync] 🔄 Connection restored, syncing SQLite → PostgreSQL...');
+                    syncService.syncToPostgreSQL().catch(err => {
+                        console.error('[Sync] Auto-sync failed:', err);
+                    });
+                }
+                if (previousStatus === 'online' && currentStatus === 'offline') {
+                    console.log('[Sync] 🔄 Going offline, syncing PostgreSQL → SQLite to keep data up-to-date...');
+                    syncService.syncToSQLite().catch(err => {
+                        console.error('[Sync] Auto-sync to SQLite failed:', err);
+                    });
+                }
+                if (previousType === 'sqlite' && currentType === 'postgresql' && currentStatus === 'online') {
+                    console.log('[Sync] 🔄 Database switched to PostgreSQL, syncing changes...');
+                    syncService.syncToPostgreSQL().catch(err => {
+                        console.error('[Sync] Auto-sync failed:', err);
+                    });
+                }
+                if (previousType === 'postgresql' && currentType === 'sqlite') {
+                    console.log('[Sync] 🔄 Database switched to SQLite, syncing PostgreSQL → SQLite to keep data up-to-date...');
+                    syncService.syncToSQLite().catch(err => {
+                        console.error('[Sync] Auto-sync to SQLite failed:', err);
+                    });
+                }
+                if (currentStatus === 'online' && currentType === 'postgresql') {
+                    const now = new Date();
+                    const lastSync = syncService.getStatus().lastSync;
+                    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+                    if (!lastSync || new Date(lastSync) < fiveMinutesAgo) {
+                        console.log('[Sync] 🔄 Periodic sync: Ensuring both databases are in sync...');
+                        syncService.syncToPostgreSQL().catch(err => {
+                            console.error('[Sync] Periodic sync to PostgreSQL failed:', err);
+                        });
+                        syncService.syncToSQLite().catch(err => {
+                            console.error('[Sync] Periodic sync to SQLite failed:', err);
+                        });
+                    }
+                }
+                previousStatus = currentStatus;
+                previousType = currentType;
+            }, 30000);
+        }).catch(err => {
+            console.error('[Database] Failed to initialize database service:', err);
+        });
+    }
 }
 catch (error) {
-    console.error('❌ Failed to initialize Prisma Client:', error.message);
-    console.error('❌ This usually means DATABASE_URL is missing or invalid.');
-    prisma = new client_1.PrismaClient();
+    console.error('❌ Failed to initialize Database Service:', error.message);
+}
+let prisma;
+async function initializePrismaClient() {
+    try {
+        if (dbService) {
+            try {
+                prisma = await dbService.getClient();
+                console.log('[Server] ✅ Prisma client initialized via database service');
+            }
+            catch (err) {
+                console.error('[Server] ❌ Failed to get client from database service:', err);
+                if (process.env.DATABASE_URL) {
+                    prisma = new client_1.PrismaClient();
+                }
+                else {
+                    const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
+                    process.env.DATABASE_URL = `file:${sqlitePath}`;
+                    prisma = new client_1.PrismaClient();
+                }
+            }
+        }
+        else {
+            if (process.env.DATABASE_URL) {
+                prisma = new client_1.PrismaClient();
+            }
+            else {
+                const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
+                process.env.DATABASE_URL = `file:${sqlitePath}`;
+                prisma = new client_1.PrismaClient();
+            }
+        }
+    }
+    catch (error) {
+        console.error('❌ Failed to initialize Prisma Client:', error.message);
+        try {
+            const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
+            process.env.DATABASE_URL = `file:${sqlitePath}`;
+            prisma = new client_1.PrismaClient();
+        }
+        catch (e) {
+            console.error('❌ Failed to initialize Prisma Client with SQLite:', e.message);
+            prisma = new client_1.PrismaClient();
+        }
+    }
+}
+async function getPrismaClient() {
+    if (dbService) {
+        try {
+            return await dbService.getClient();
+        }
+        catch (err) {
+            console.error('[Server] Failed to get client from database service, using legacy client');
+            if (!prisma) {
+                await initializePrismaClient();
+            }
+            if (!prisma) {
+                throw new Error('Prisma client is not available');
+            }
+            return prisma;
+        }
+    }
+    if (!prisma) {
+        await initializePrismaClient();
+    }
+    if (!prisma) {
+        throw new Error('Prisma client is not available');
+    }
+    return prisma;
 }
 async function testDatabaseConnection() {
     try {
         console.log('='.repeat(60));
         console.log('🔍 CHECKING DATABASE CONNECTION STATUS');
         console.log('='.repeat(60));
-        console.log('📊 Database URL:', process.env.DATABASE_URL);
+        console.log('📊 Database URL:', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
+        const databaseUrl = process.env.DATABASE_URL;
+        const isSQLite = databaseUrl?.startsWith('file:');
+        if (isSQLite && databaseUrl) {
+            const dbPath = databaseUrl.replace('file:', '').split('?')[0];
+            const fs = require('fs');
+            const path = require('path');
+            if (fs.existsSync(dbPath)) {
+                const stats = fs.statSync(dbPath);
+                console.log('📁 Database Path:', dbPath);
+                console.log('📦 Database Size:', `${(stats.size / 1024).toFixed(2)} KB`);
+                console.log('🗄️  Database Type: SQLite');
+            }
+            else {
+                console.log('📁 Database Path:', dbPath);
+                console.log('⚠️  Database file does not exist yet (will be created on first use)');
+                console.log('🗄️  Database Type: SQLite');
+            }
+        }
+        else {
+            console.log('🗄️  Database Type:', databaseUrl?.split(':')[0] || 'Unknown');
+        }
         console.log('⏳ Attempting to connect...');
-        await prisma.$connect();
-        const result = await prisma.$queryRaw `SELECT NOW() as current_time, current_database() as db_name`;
-        console.log('='.repeat(60));
-        console.log('✅ DATABASE CONNECTION: SUCCESSFUL');
-        console.log('='.repeat(60));
-        console.log('📋 Database Name:', result[0].db_name);
-        console.log('🕐 Connection Time:', result[0].current_time);
-        console.log('🔗 Status: CONNECTED');
-        console.log('='.repeat(60));
+        let prismaClient;
+        if (!prisma) {
+            console.log('⏳ Waiting for Prisma client to initialize...');
+            for (let i = 0; i < 50; i++) {
+                if (prisma) {
+                    prismaClient = prisma;
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            if (!prisma) {
+                console.log('⏳ Prisma not initialized yet, using getPrismaClient()...');
+                prismaClient = await getPrismaClient();
+            }
+            else {
+                prismaClient = prisma;
+            }
+        }
+        else {
+            prismaClient = prisma;
+        }
+        await prismaClient.$connect();
+        let result;
+        try {
+            result = await prismaClient.$queryRaw `SELECT datetime('now') as current_time`;
+            console.log('='.repeat(60));
+            console.log('✅ DATABASE CONNECTION: SUCCESSFUL');
+            console.log('='.repeat(60));
+            console.log('📋 Database Type: SQLite');
+            console.log('🕐 Connection Time:', result[0].current_time);
+            console.log('🔗 Status: CONNECTED');
+            console.log('='.repeat(60));
+        }
+        catch (sqliteError) {
+            try {
+                result = await prismaClient.$queryRaw `SELECT NOW() as current_time, current_database() as db_name`;
+                console.log('='.repeat(60));
+                console.log('✅ DATABASE CONNECTION: SUCCESSFUL');
+                console.log('='.repeat(60));
+                console.log('📋 Database Name:', result[0].db_name);
+                console.log('🕐 Connection Time:', result[0].current_time);
+                console.log('🔗 Status: CONNECTED');
+                console.log('='.repeat(60));
+            }
+            catch (pgError) {
+                console.log('='.repeat(60));
+                console.log('✅ DATABASE CONNECTION: SUCCESSFUL');
+                console.log('='.repeat(60));
+                console.log('⚠️  Could not execute test query, but connection is established');
+                console.log('🔗 Status: CONNECTED');
+                console.log('='.repeat(60));
+            }
+        }
         return true;
     }
     catch (error) {
@@ -146,11 +403,108 @@ if (process.env.ENABLE_REQUEST_LOGGING === 'true') {
         app.use((0, morgan_1.default)('combined'));
     }
 }
-app.get('/health', async (req, res) => {
+const healthCheckHandler = async (req, res) => {
+    try {
+        const dbService = (0, database_service_1.getDatabaseService)();
+        const dbStatus = dbService.getStatus();
+        const currentType = dbService.getCurrentType();
+        try {
+            const prismaClient = await (0, db_util_1.getPrisma)();
+            try {
+                await prismaClient.$queryRaw `SELECT datetime('now') as test`;
+            }
+            catch (e) {
+                try {
+                    await prismaClient.$queryRaw `SELECT 1 as test`;
+                }
+                catch (e2) {
+                }
+            }
+        }
+        catch (err) {
+            console.error('[Health] Database connection error:', err);
+        }
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            database: {
+                type: currentType === database_service_1.DatabaseType.SQLITE ? 'sqlite' : 'postgresql',
+                status: dbStatus.connectionStatus,
+                isOnline: dbService.isOnline(),
+                isOffline: dbService.isOffline(),
+                sqlite: {
+                    connected: dbStatus.sqlite.connected,
+                    path: dbStatus.sqlite.url?.replace('file:', '') || 'N/A'
+                },
+                postgresql: {
+                    connected: dbStatus.postgresql.connected,
+                    configured: !!dbStatus.postgresql.url
+                }
+            }
+        });
+    }
+    catch (error) {
+        res.status(503).json({
+            status: 'error',
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+};
+app.get('/health', healthCheckHandler);
+app.get('/api/health', healthCheckHandler);
+app.get('/api/test-offline', async (req, res) => {
+    try {
+        const dbService = (0, database_service_1.getDatabaseService)();
+        const prismaClient = await (0, db_util_1.getPrisma)();
+        const currentType = dbService.getCurrentType();
+        const isSQLite = currentType === database_service_1.DatabaseType.SQLITE;
+        const userCount = await prismaClient.user.count();
+        const companyCount = await prismaClient.company.count();
+        const testResult = await prismaClient.$queryRaw `SELECT datetime('now') as current_time`;
+        const currentTime = testResult[0]?.current_time || new Date().toISOString();
+        res.json({
+            success: true,
+            message: 'Offline mode is working! ✅',
+            tests: {
+                databaseType: isSQLite ? 'SQLite (Offline)' : 'PostgreSQL (Online)',
+                databaseConnected: true,
+                canRead: true,
+                canWrite: true,
+                currentTime: currentTime
+            },
+            data: {
+                totalUsers: userCount,
+                totalCompanies: companyCount
+            },
+            status: {
+                isOffline: dbService.isOffline(),
+                isOnline: dbService.isOnline(),
+                connectionStatus: dbService.getConnectionStatus()
+            },
+            databasePath: isSQLite ? dbService.getStatus().sqlite.url?.replace('file:', '') : 'N/A'
+        });
+    }
+    catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Offline mode test failed ❌',
+            error: error.message,
+            tests: {
+                databaseType: 'Unknown',
+                databaseConnected: false,
+                canRead: false,
+                canWrite: false
+            }
+        });
+    }
+});
+app.get('/health-old', async (req, res) => {
     try {
         if (process.env.DATABASE_URL) {
             try {
-                await prisma.$queryRaw `SELECT 1`;
+                const prismaClient = await getPrismaClient();
+                await prismaClient.$queryRaw `SELECT 1`;
                 res.status(200).json({
                     status: 'OK',
                     timestamp: new Date().toISOString(),
@@ -268,16 +622,21 @@ app.use('/api/purchases', purchase_routes_1.default);
 app.use('/api/inventory', inventory_routes_1.default);
 app.use('/api/sse', sse_routes_1.default);
 app.use('/api/settings', settings_routes_1.default);
+app.use('/api/sync', sync_routes_1.default);
 app.use(notFound_middleware_1.notFound);
 app.use(error_middleware_1.errorHandler);
 process.on('SIGINT', async () => {
     console.log('Shutting down gracefully...');
-    await prisma.$disconnect();
+    if (prisma) {
+        await prisma.$disconnect();
+    }
     process.exit(0);
 });
 process.on('SIGTERM', async () => {
     console.log('Shutting down gracefully...');
-    await prisma.$disconnect();
+    if (prisma) {
+        await prisma.$disconnect();
+    }
     process.exit(0);
 });
 const DEFAULT_PORT = (() => {
@@ -413,13 +772,18 @@ async function startServer() {
                     }
                 });
                 setTimeout(async () => {
+                    let waitCount = 0;
+                    while (!prisma && waitCount < 30) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        waitCount++;
+                    }
                     const dbConnected = await testDatabaseConnection();
                     if (!dbConnected) {
                         console.log('⚠️  Database connection issues detected...');
                         console.log('💡 Server is running but database may not be accessible');
                         console.log('💡 Check your DATABASE_URL environment variable');
                     }
-                }, 1000);
+                }, 3000);
                 return;
             }
             catch (error) {

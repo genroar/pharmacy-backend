@@ -1,9 +1,10 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "darwin", "darwin-arm64", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -14,10 +15,12 @@ model User {
   password      String
   name          String
   profileImage  String?
-  role          UserRole        @default(CASHIER)
+  role          String          @default("CASHIER")
   branchId      String?
   companyId     String?
-  isActive      Boolean         @default(true)
+  isActive      Boolean         @default(false)
+  sessionToken  String?
+  lastLoginAt   DateTime?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   createdBy     String?
@@ -44,7 +47,7 @@ model Employee {
   department               String?
   salary                   Float?
   hireDate                 DateTime
-  status                   EmployeeStatus @default(ACTIVE)
+  status                   String         @default("ACTIVE")
   branchId                 String
   companyId                String
   emergencyContactName     String?
@@ -70,7 +73,7 @@ model Company {
   phone        String?
   email        String?
   website      String?
-  businessType BusinessType?
+  businessType String?
   createdBy    String?
   isActive     Boolean      @default(true)
   createdAt    DateTime     @default(now())
@@ -113,6 +116,9 @@ model Branch {
   batches         Batch[]
   purchases       Purchase[]
   categories      Category[]
+  manufacturers   Manufacturer[]
+  suppliers       Supplier[]
+  shelves         Shelf[]
   company         Company      @relation(fields: [companyId], references: [id])
 
   @@unique([name, companyId], name: "branch_name_per_company")
@@ -123,7 +129,7 @@ model Category {
   id          String        @id @default(cuid())
   name        String
   description String?
-  type        CategoryType  @default(GENERAL)
+  type        String        @default("GENERAL")
   color       String?       @default("#3B82F6")
   branchId    String?
   companyId   String?
@@ -144,31 +150,38 @@ model Manufacturer {
   description String?
   website     String?
   country     String?
+  branchId    String?
+  companyId   String?
   createdBy   String?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  branch      Branch?   @relation(fields: [branchId], references: [id])
   suppliers   Supplier[]
 
-  @@unique([name, createdBy], name: "manufacturer_name_per_admin")
+  @@unique([name, branchId], name: "manufacturer_name_per_branch")
   @@map("manufacturers")
 }
 
 model Supplier {
   id              String        @id @default(cuid())
-  name            String        @unique
+  name            String
   contactPerson   String
   phone           String
   manufacturerId  String?
+  branchId        String?
+  companyId       String?
   createdBy       String?
   isActive        Boolean       @default(true)
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
+  branch          Branch?       @relation(fields: [branchId], references: [id])
   manufacturer    Manufacturer? @relation(fields: [manufacturerId], references: [id])
   products        Product[]
   batches         Batch[]
   purchases       Purchase[]
 
+  @@unique([name, branchId], name: "supplier_name_per_branch")
   @@map("suppliers")
 }
 
@@ -177,13 +190,16 @@ model Shelf {
   name        String
   description String?
   location    String?
+  branchId    String?
+  companyId   String?
   createdBy   String?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  branch      Branch?   @relation(fields: [branchId], references: [id])
   batches     Batch[]
 
-  @@unique([name, createdBy], name: "shelf_name_per_admin")
+  @@unique([name, branchId], name: "shelf_name_per_branch")
   @@map("shelves")
 }
 
@@ -270,7 +286,7 @@ model Purchase {
   totalAmount     Float           @default(0)
   paidAmount      Float           @default(0)
   outstanding     Float           @default(0)
-  status          PurchaseStatus  @default(PENDING)
+  status          String          @default("PENDING")
   notes           String?
   createdBy       String?
   createdAt       DateTime        @default(now())
@@ -303,7 +319,7 @@ model PurchaseItem {
 model StockMovement {
   id        String            @id @default(cuid())
   productId String
-  type      StockMovementType
+  type      String
   quantity  Int
   reason    String?
   reference String?
@@ -349,9 +365,9 @@ model Sale {
   discountAmount     Float         @default(0)
   discountPercentage Float?        @default(0)
   totalAmount        Float
-  paymentMethod      PaymentMethod
-  paymentStatus      PaymentStatus @default(PENDING)
-  status             SaleStatus    @default(COMPLETED)
+  paymentMethod      String
+  paymentStatus      String        @default("PENDING")
+  status             String       @default("COMPLETED")
   saleDate           DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
@@ -400,16 +416,16 @@ model Receipt {
 }
 
 model Refund {
-  id             String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id             String        @id @default(cuid())
   originalSaleId String
   refundReason   String
-  refundAmount   Decimal       @db.Decimal(10, 2)
+  refundAmount   Float
   refundedBy     String
   createdBy      String?
-  status         refund_status @default(PENDING)
-  processedAt    DateTime?     @db.Timestamp(6)
-  createdAt      DateTime?     @default(now()) @db.Timestamp(6)
-  updatedAt      DateTime?     @default(now()) @updatedAt @db.Timestamp(6)
+  status         String        @default("PENDING")
+  processedAt    DateTime?
+  createdAt      DateTime?     @default(now())
+  updatedAt      DateTime?     @default(now()) @updatedAt
   items          RefundItem[]
   originalSale   Sale          @relation("SaleRefunds", fields: [originalSaleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   refundedByUser User          @relation(fields: [refundedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -418,12 +434,12 @@ model Refund {
 }
 
 model RefundItem {
-  id        String  @id @default(dbgenerated("(gen_random_uuid())::text"))
+  id        String  @id @default(cuid())
   refundId  String
   productId String
   createdBy String?
   quantity  Int
-  unitPrice Decimal @db.Decimal(10, 2)
+  unitPrice Float
   reason    String
   product   Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   refund    Refund  @relation(fields: [refundId], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -438,7 +454,7 @@ model Attendance {
   checkIn    DateTime
   checkOut   DateTime?
   totalHours Float?
-  status     AttendanceStatus @default(PRESENT)
+  status     String           @default("PRESENT")
   notes      String?
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
@@ -461,7 +477,7 @@ model Shift {
   expectedBalance Float?
   actualBalance   Float?
   difference      Float?
-  status          ShiftStatus @default(ACTIVE)
+  status          String      @default("ACTIVE")
   notes           String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -476,7 +492,7 @@ model Commission {
   employeeId        String
   branchId          String
   period            String
-  periodType        PeriodType       @default(MONTHLY)
+  periodType        String           @default("MONTHLY")
   totalSales        Float            @default(0)
   totalTransactions Int              @default(0)
   averageSale       Float            @default(0)
@@ -485,7 +501,7 @@ model Commission {
   totalCommission   Float            @default(0)
   bonusAmount       Float            @default(0)
   totalAmount       Float            @default(0)
-  status            CommissionStatus @default(PENDING)
+  status            String           @default("PENDING")
   paidAt            DateTime?
   notes             String?
   createdAt         DateTime         @default(now())
@@ -513,7 +529,7 @@ model subscriptions {
   id              String             @id
   userId          String
   planName        String
-  status          SubscriptionStatus @default(PENDING)
+  status          String             @default("PENDING")
   startDate       DateTime
   endDate         DateTime
   amount          Float
@@ -546,7 +562,7 @@ model ScheduledShift {
   date            DateTime              // Date of the shift
   branchId        String
   maxUsers        Int                   @default(1)
-  status          ScheduledShiftStatus  @default(SCHEDULED)
+  status          String                @default("SCHEDULED")
   notes           String?
   assignedUsers   ScheduledShiftUser[]
   createdAt       DateTime              @default(now())
@@ -569,112 +585,5 @@ model ScheduledShiftUser {
   @@map("scheduled_shift_users")
 }
 
-enum UserRole {
-  SUPERADMIN
-  ADMIN
-  MANAGER
-  CASHIER
-}
-
-enum StockMovementType {
-  IN
-  OUT
-  ADJUSTMENT
-  RETURN
-}
-
-enum PaymentMethod {
-  CASH
-  CARD
-  MOBILE
-  BANK_TRANSFER
-}
-
-enum PaymentStatus {
-  PENDING
-  COMPLETED
-  FAILED
-  REFUNDED
-}
-
-enum SaleStatus {
-  PENDING
-  COMPLETED
-  CANCELLED
-  REFUNDED
-}
-
-enum PurchaseStatus {
-  PENDING
-  COMPLETED
-  CANCELLED
-  PARTIAL
-}
-
-enum AttendanceStatus {
-  PRESENT
-  ABSENT
-  LATE
-  HALF_DAY
-  LEAVE
-}
-
-enum ShiftStatus {
-  ACTIVE
-  COMPLETED
-  CANCELLED
-}
-
-enum ScheduledShiftStatus {
-  SCHEDULED
-  ACTIVE
-  COMPLETED
-  CANCELLED
-}
-
-enum CommissionStatus {
-  PENDING
-  APPROVED
-  PAID
-  CANCELLED
-}
-
-enum PeriodType {
-  DAILY
-  WEEKLY
-  MONTHLY
-  YEARLY
-}
-
-enum EmployeeStatus {
-  ACTIVE
-  INACTIVE
-  TERMINATED
-  ON_LEAVE
-}
-
-enum refund_status {
-  PENDING
-  PROCESSED
-  CANCELLED
-}
-
-enum SubscriptionStatus {
-  ACTIVE
-  EXPIRED
-  CANCELLED
-  PENDING
-}
-
-enum BusinessType {
-  PHARMACY
-  STORE
-  HOTEL
-  CLINIC
-}
-
-enum CategoryType {
-  MEDICAL
-  NON_MEDICAL
-  GENERAL
-}
+// Enums removed - SQLite doesn't support enums, using String instead
+// All enum values are now stored as strings in the database

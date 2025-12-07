@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const checkInSchema = Joi.object({
@@ -24,6 +22,7 @@ const updateAttendanceSchema = Joi.object({
 // Check in employee
 export const checkIn = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = checkInSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -123,6 +122,7 @@ export const checkIn = async (req: Request, res: Response) => {
 // Check out employee
 export const checkOut = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = checkOutSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -217,6 +217,7 @@ export const checkOut = async (req: Request, res: Response) => {
 // Get attendance records
 export const getAttendance = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -306,6 +307,7 @@ export const getAttendance = async (req: Request, res: Response) => {
 // Get today's attendance for an employee
 export const getTodayAttendance = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { employeeId } = req.params;
 
     const today = new Date();
@@ -355,9 +357,10 @@ export const getTodayAttendance = async (req: Request, res: Response) => {
 // Update attendance record
 export const updateAttendance = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateAttendanceSchema.validate(req.body);
-    
+
     if (error) {
       return res.status(400).json({
         success: false,
@@ -419,6 +422,7 @@ export const updateAttendance = async (req: Request, res: Response) => {
 // Get attendance statistics
 export const getAttendanceStats = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId, startDate, endDate } = req.query;
 
     const where: any = {};

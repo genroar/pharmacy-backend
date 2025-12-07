@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.downloadInvoice = exports.getPaymentMethods = exports.processPayment = exports.getBillingHistory = exports.deletePaymentMethod = exports.setDefaultPaymentMethod = exports.addPaymentMethod = exports.updateSubscription = exports.getSubscription = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const updateSubscriptionSchema = joi_1.default.object({
     plan: joi_1.default.string().valid('basic', 'premium', 'enterprise'),
     autoRenew: joi_1.default.boolean()
@@ -21,6 +20,7 @@ const addPaymentMethodSchema = joi_1.default.object({
     isDefault: joi_1.default.boolean().default(false)
 });
 const getSubscription = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const userId = req.user?.id;
         if (!userId) {
@@ -81,6 +81,7 @@ const getSubscription = async (req, res) => {
 };
 exports.getSubscription = getSubscription;
 const updateSubscription = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const { error } = updateSubscriptionSchema.validate(req.body);
         if (error) {
@@ -113,6 +114,7 @@ const updateSubscription = async (req, res) => {
 };
 exports.updateSubscription = updateSubscription;
 const addPaymentMethod = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const { error } = addPaymentMethodSchema.validate(req.body);
         if (error) {
@@ -146,6 +148,7 @@ const addPaymentMethod = async (req, res) => {
 };
 exports.addPaymentMethod = addPaymentMethod;
 const setDefaultPaymentMethod = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const { methodId } = req.params;
         const userId = req.user?.id;
@@ -171,6 +174,7 @@ const setDefaultPaymentMethod = async (req, res) => {
 };
 exports.setDefaultPaymentMethod = setDefaultPaymentMethod;
 const deletePaymentMethod = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const { methodId } = req.params;
         const userId = req.user?.id;
@@ -196,6 +200,7 @@ const deletePaymentMethod = async (req, res) => {
 };
 exports.deletePaymentMethod = deletePaymentMethod;
 const getBillingHistory = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const userId = req.user?.id;
         if (!userId) {
@@ -249,6 +254,7 @@ const getBillingHistory = async (req, res) => {
 };
 exports.getBillingHistory = getBillingHistory;
 const processPayment = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const userId = req.user?.id;
         const { method, phoneNumber, amount, transactionId } = req.body;
@@ -305,6 +311,7 @@ const processPayment = async (req, res) => {
 };
 exports.processPayment = processPayment;
 const getPaymentMethods = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const userId = req.user?.id;
         if (!userId) {
@@ -373,6 +380,7 @@ const getPaymentMethods = async (req, res) => {
 };
 exports.getPaymentMethods = getPaymentMethods;
 const downloadInvoice = async (req, res) => {
+    const prisma = await (0, db_util_1.getPrisma)();
     try {
         const { invoiceId } = req.params;
         const userId = req.user?.id;

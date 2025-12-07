@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createBranchSchema = Joi.object({
@@ -27,6 +25,7 @@ const updateBranchSchema = Joi.object({
 
 export const getBranches = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { page = 1, limit = 10, search = '' } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -61,10 +60,10 @@ export const getBranches = async (req: AuthRequest, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { address: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search } },
+        { address: { contains: search } },
         { phone: { contains: search } },
-        { email: { contains: search, mode: 'insensitive' } }
+        { email: { contains: search } }
       ];
     }
 
@@ -116,6 +115,7 @@ export const getBranches = async (req: AuthRequest, res: Response) => {
 
 export const getBranch = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const branch = await prisma.branch.findUnique({
@@ -169,6 +169,7 @@ export const getBranch = async (req: Request, res: Response) => {
 
 export const createBranch = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = createBranchSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -250,6 +251,7 @@ export const createBranch = async (req: AuthRequest, res: Response) => {
 
 export const updateBranch = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateBranchSchema.validate(req.body);
 
@@ -312,6 +314,7 @@ export const updateBranch = async (req: AuthRequest, res: Response) => {
 
 export const deleteBranch = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const branch = await prisma.branch.findUnique({

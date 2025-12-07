@@ -4,11 +4,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateSale = exports.createSale = exports.getAvailableReceiptNumbers = exports.getSaleByReceiptNumber = exports.getSale = exports.getSales = void 0;
-const client_1 = require("@prisma/client");
+require("../config/database.init");
+const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const sse_routes_1 = require("../routes/sse.routes");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createSaleSchema = joi_1.default.object({
     customerId: joi_1.default.string().allow(null),
     branchId: joi_1.default.string().required(),
@@ -31,6 +31,7 @@ const createSaleSchema = joi_1.default.object({
 });
 const getSales = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, startDate = '', endDate = '', branchId = '', customerId = '', paymentMethod = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -130,6 +131,7 @@ const getSales = async (req, res) => {
 exports.getSales = getSales;
 const getSale = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const sale = await prisma.sale.findUnique({
             where: { id },
@@ -196,6 +198,7 @@ const getSale = async (req, res) => {
 exports.getSale = getSale;
 const getSaleByReceiptNumber = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { receiptNumber } = req.params;
         console.log('Looking up receipt number:', receiptNumber);
         const allReceipts = await prisma.receipt.findMany({
@@ -277,6 +280,7 @@ const getSaleByReceiptNumber = async (req, res) => {
 exports.getSaleByReceiptNumber = getSaleByReceiptNumber;
 const getAvailableReceiptNumbers = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const receipts = await prisma.receipt.findMany({
             select: {
                 id: true,
@@ -305,6 +309,7 @@ const getAvailableReceiptNumbers = async (req, res) => {
 exports.getAvailableReceiptNumbers = getAvailableReceiptNumbers;
 const createSale = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Sale creation request body:', req.body);
         const { error } = createSaleSchema.validate(req.body);
         if (error) {
@@ -376,7 +381,7 @@ const createSale = async (req, res) => {
                 targetBranchId = saleData.branchId;
                 console.log('🏢 Using provided branch context for sale:', { targetCompanyId, targetBranchId });
             }
-            const paymentStatus = saleData.paymentStatus || 'COMPLETED';
+            const paymentStatus = (saleData.paymentStatus || 'COMPLETED');
             const saleStatus = paymentStatus === 'COMPLETED' ? 'COMPLETED' : 'PENDING';
             const sale = await tx.sale.create({
                 data: {
@@ -592,6 +597,7 @@ const createSale = async (req, res) => {
 exports.createSale = createSale;
 const updateSale = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { discountPercentage, saleDate, notes, paymentStatus } = req.body;
         console.log('Update sale request:', { id, discountPercentage, saleDate, notes, paymentStatus });
@@ -642,7 +648,7 @@ const updateSale = async (req, res) => {
             newTaxAmount = subtotalAfterDiscount * 0;
             newTotalAmount = subtotalAfterDiscount + newTaxAmount;
         }
-        const newPaymentStatus = paymentStatus || existingSale.paymentStatus;
+        const newPaymentStatus = (paymentStatus || existingSale.paymentStatus);
         const newSaleStatus = newPaymentStatus === 'COMPLETED' ? 'COMPLETED' :
             newPaymentStatus === 'PENDING' ? 'PENDING' :
                 existingSale.status;
@@ -686,7 +692,7 @@ const updateSale = async (req, res) => {
             createdAt: updatedSale.createdAt.toISOString(),
             updatedAt: updatedSale.updatedAt.toISOString(),
             saleDate: updatedSale.saleDate?.toISOString() || null,
-            items: updatedSale.items.map(item => ({
+            items: updatedSale.items.map((item) => ({
                 ...item,
                 id: item.id.toString(),
                 saleId: item.saleId.toString(),
@@ -744,7 +750,7 @@ const updateSale = async (req, res) => {
                 createdAt: updatedSale.company.createdAt.toISOString(),
                 updatedAt: updatedSale.company.updatedAt.toISOString()
             },
-            receipts: updatedSale.receipts.map(receipt => ({
+            receipts: updatedSale.receipts.map((receipt) => ({
                 ...receipt,
                 id: receipt.id.toString(),
                 saleId: receipt.saleId.toString(),

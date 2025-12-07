@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient, UserRole } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
 import { notifyUserDeactivation, notifyUserReactivation } from '../routes/sse.routes';
 import { AuthRequest } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const createAdminSchema = Joi.object({
@@ -30,18 +28,19 @@ const updateAdminSchema = Joi.object({
 // Get all admins (SuperAdmin only)
 export const getAdmins = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { page = 1, limit = 10, search = '' } = req.query;
 
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
 
-    const where = {
-      role: UserRole.ADMIN,
+    const where: any = {
+      role: 'ADMIN',
       ...(search && {
         OR: [
-          { name: { contains: search as string, mode: 'insensitive' as const } },
-          { email: { contains: search as string, mode: 'insensitive' as const } },
-          { branch: { name: { contains: search as string, mode: 'insensitive' as const } } }
+          { name: { contains: search as string } },
+          { email: { contains: search as string } },
+          { branch: { name: { contains: search as string } } }
         ]
       })
     };
@@ -72,7 +71,7 @@ export const getAdmins = async (req: Request, res: Response) => {
 
     // Calculate additional stats for each admin
     const adminsWithStats = await Promise.all(
-      admins.map(async (admin) => {
+      admins.map(async (admin: any) => {
         // Get total sales for this admin
         const salesStats = await prisma.sale.aggregate({
           where: { userId: admin.id },
@@ -141,6 +140,7 @@ export const getAdmins = async (req: Request, res: Response) => {
 // Get admin by ID
 export const getAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     const admin = await prisma.user.findFirst({
@@ -222,6 +222,7 @@ export const getAdmin = async (req: Request, res: Response): Promise<void> => {
 // Create admin
 export const createAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { error } = createAdminSchema.validate(req.body);
     if (error) {
       res.status(400).json({
@@ -270,7 +271,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
     }
 
     // Create admin user and branch in a transaction
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: any) => {
       // Create a new company first
       const newCompany = await tx.company.create({
         data: {
@@ -372,6 +373,7 @@ export const createAdmin = async (req: AuthRequest, res: Response): Promise<void
 // Update admin
 export const updateAdmin = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateAdminSchema.validate(req.body);
 
@@ -470,6 +472,7 @@ export const updateAdmin = async (req: Request, res: Response): Promise<void> =>
 // Delete admin
 export const deleteAdmin = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
 
     // Check if admin exists
@@ -495,7 +498,7 @@ export const deleteAdmin = async (req: AuthRequest, res: Response): Promise<void
         select: { id: true }
       });
 
-      const productIds = adminProducts.map(p => p.id);
+      const productIds = adminProducts.map((p: any) => p.id);
 
       console.log(`   📊 Found ${productIds.length} products to delete`);
 
@@ -617,6 +620,7 @@ export const deleteAdmin = async (req: AuthRequest, res: Response): Promise<void
 // Get admin users
 export const getAdminUsers = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { createdBy } = req.params;
 
     // Check if admin exists
@@ -649,7 +653,7 @@ export const getAdminUsers = async (req: Request, res: Response): Promise<void> 
       orderBy: { createdAt: 'desc' }
     });
 
-    const usersWithStats = users.map(user => ({
+    const usersWithStats = users.map((user: any) => ({
       id: user.id,
       name: user.name,
       createdBy: createdBy,
@@ -674,6 +678,7 @@ export const getAdminUsers = async (req: Request, res: Response): Promise<void> 
 // Get superadmin dashboard stats
 export const getSuperAdminStats = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     // Get total admins
     const totalAdmins = await prisma.user.count({
       where: { role: 'ADMIN', isActive: true }
@@ -721,7 +726,7 @@ export const getSuperAdminStats = async (req: Request, res: Response): Promise<v
     });
 
     const recentAdminsWithStats = await Promise.all(
-      recentAdmins.map(async (admin) => {
+      recentAdmins.map(async (admin: any) => {
         const salesStats = await prisma.sale.aggregate({
           where: { userId: admin.id },
           _sum: { totalAmount: true }

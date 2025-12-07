@@ -4,10 +4,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSuperAdminStats = exports.getAdminUsers = exports.deleteAdmin = exports.updateAdmin = exports.createAdmin = exports.getAdmin = exports.getAdmins = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
 const sse_routes_1 = require("../routes/sse.routes");
-const prisma = new client_1.PrismaClient();
 const createAdminSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     email: joi_1.default.string().email().required(),
@@ -28,16 +27,17 @@ const updateAdminSchema = joi_1.default.object({
 });
 const getAdmins = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {
-            role: client_1.UserRole.ADMIN,
+            role: 'ADMIN',
             ...(search && {
                 OR: [
-                    { name: { contains: search, mode: 'insensitive' } },
-                    { email: { contains: search, mode: 'insensitive' } },
-                    { branch: { name: { contains: search, mode: 'insensitive' } } }
+                    { name: { contains: search } },
+                    { email: { contains: search } },
+                    { branch: { name: { contains: search } } }
                 ]
             })
         };
@@ -125,6 +125,7 @@ const getAdmins = async (req, res) => {
 exports.getAdmins = getAdmins;
 const getAdmin = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const admin = await prisma.user.findFirst({
             where: {
@@ -198,6 +199,7 @@ const getAdmin = async (req, res) => {
 exports.getAdmin = getAdmin;
 const createAdmin = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = createAdminSchema.validate(req.body);
         if (error) {
             res.status(400).json({
@@ -325,6 +327,7 @@ const createAdmin = async (req, res) => {
 exports.createAdmin = createAdmin;
 const updateAdmin = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateAdminSchema.validate(req.body);
         if (error) {
@@ -406,6 +409,7 @@ const updateAdmin = async (req, res) => {
 exports.updateAdmin = updateAdmin;
 const deleteAdmin = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const existingAdmin = await prisma.user.findFirst({
             where: { id, role: 'ADMIN' }
@@ -423,7 +427,7 @@ const deleteAdmin = async (req, res) => {
                 where: { createdBy: id },
                 select: { id: true }
             });
-            const productIds = adminProducts.map(p => p.id);
+            const productIds = adminProducts.map((p) => p.id);
             console.log(`   📊 Found ${productIds.length} products to delete`);
             await tx.refundItem.deleteMany({
                 where: { createdBy: id }
@@ -515,6 +519,7 @@ const deleteAdmin = async (req, res) => {
 exports.deleteAdmin = deleteAdmin;
 const getAdminUsers = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { createdBy } = req.params;
         const admin = await prisma.user.findFirst({
             where: { id: createdBy, role: 'ADMIN' }
@@ -541,7 +546,7 @@ const getAdminUsers = async (req, res) => {
             },
             orderBy: { createdAt: 'desc' }
         });
-        const usersWithStats = users.map(user => ({
+        const usersWithStats = users.map((user) => ({
             id: user.id,
             name: user.name,
             createdBy: createdBy,
@@ -565,6 +570,7 @@ const getAdminUsers = async (req, res) => {
 exports.getAdminUsers = getAdminUsers;
 const getSuperAdminStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const totalAdmins = await prisma.user.count({
             where: { role: 'ADMIN', isActive: true }
         });

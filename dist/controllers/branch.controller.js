@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteBranch = exports.updateBranch = exports.createBranch = exports.getBranch = exports.getBranches = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createBranchSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     address: joi_1.default.string().required(),
@@ -26,6 +25,7 @@ const updateBranchSchema = joi_1.default.object({
 });
 const getBranches = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -52,10 +52,10 @@ const getBranches = async (req, res) => {
         }
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { address: { contains: search, mode: 'insensitive' } },
+                { name: { contains: search } },
+                { address: { contains: search } },
                 { phone: { contains: search } },
-                { email: { contains: search, mode: 'insensitive' } }
+                { email: { contains: search } }
             ];
         }
         const [branches, total] = await Promise.all([
@@ -106,6 +106,7 @@ const getBranches = async (req, res) => {
 exports.getBranches = getBranches;
 const getBranch = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const branch = await prisma.branch.findUnique({
             where: { id },
@@ -157,6 +158,7 @@ const getBranch = async (req, res) => {
 exports.getBranch = getBranch;
 const createBranch = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = createBranchSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -228,6 +230,7 @@ const createBranch = async (req, res) => {
 exports.createBranch = createBranch;
 const updateBranch = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateBranchSchema.validate(req.body);
         if (error) {
@@ -281,6 +284,7 @@ const updateBranch = async (req, res) => {
 exports.updateBranch = updateBranch;
 const deleteBranch = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const branch = await prisma.branch.findUnique({
             where: { id }

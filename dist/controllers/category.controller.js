@@ -4,15 +4,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteCategory = exports.updateCategory = exports.createCategory = exports.getCategory = exports.getCategories = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createCategorySchema = joi_1.default.object({
     name: joi_1.default.string().required(),
-    description: joi_1.default.string().allow(''),
+    description: joi_1.default.string().allow('', null),
     type: joi_1.default.string().valid('MEDICAL', 'NON_MEDICAL', 'GENERAL').default('GENERAL'),
     color: joi_1.default.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
-    branchId: joi_1.default.string().optional()
+    branchId: joi_1.default.string().allow('', null).optional(),
+    companyId: joi_1.default.string().allow('', null).optional()
 });
 const updateCategorySchema = joi_1.default.object({
     name: joi_1.default.string(),
@@ -22,6 +22,7 @@ const updateCategorySchema = joi_1.default.object({
 });
 const getCategories = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 50, search = '', branchId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -113,8 +114,8 @@ const getCategories = async (req, res) => {
             if (finalWhere.AND) {
                 finalWhere.AND.push({
                     OR: [
-                        { name: { contains: search, mode: 'insensitive' } },
-                        { description: { contains: search, mode: 'insensitive' } }
+                        { name: { contains: search } },
+                        { description: { contains: search } }
                     ]
                 });
             }
@@ -124,8 +125,8 @@ const getCategories = async (req, res) => {
                         { OR: finalWhere.OR },
                         {
                             OR: [
-                                { name: { contains: search, mode: 'insensitive' } },
-                                { description: { contains: search, mode: 'insensitive' } }
+                                { name: { contains: search } },
+                                { description: { contains: search } }
                             ]
                         }
                     ]
@@ -133,8 +134,8 @@ const getCategories = async (req, res) => {
             }
             else {
                 finalWhere.OR = [
-                    { name: { contains: search, mode: 'insensitive' } },
-                    { description: { contains: search, mode: 'insensitive' } }
+                    { name: { contains: search } },
+                    { description: { contains: search } }
                 ];
             }
         }
@@ -185,6 +186,7 @@ const getCategories = async (req, res) => {
 exports.getCategories = getCategories;
 const getCategory = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const where = { id };
         const targetBranchId = req.user?.selectedBranchId || req.user?.branchId;
@@ -243,6 +245,7 @@ const getCategory = async (req, res) => {
 exports.getCategory = getCategory;
 const createCategory = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('=== CREATE CATEGORY REQUEST ===');
         console.log('Request body:', req.body);
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
@@ -255,11 +258,31 @@ const createCategory = async (req, res) => {
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const { name, description, type, color, branchId } = req.body;
-        const userBranchId = req.user?.branchId;
-        const userCompanyId = req.user?.companyId;
-        const categoryBranchId = branchId || userBranchId;
-        const categoryCompanyId = userCompanyId;
+        const { name, description, type, color, branchId, companyId } = req.body;
+        const headerBranchId = req.headers['x-branch-id'];
+        const headerCompanyId = req.headers['x-company-id'];
+        const userBranchId = req.user?.selectedBranchId || req.user?.branchId;
+        const userCompanyId = req.user?.selectedCompanyId || req.user?.companyId;
+        const categoryBranchId = (branchId && branchId.trim() !== '')
+            ? branchId
+            : (headerBranchId && headerBranchId.trim() !== '')
+                ? headerBranchId
+                : userBranchId;
+        const categoryCompanyId = (companyId && companyId.trim() !== '')
+            ? companyId
+            : (headerCompanyId && headerCompanyId.trim() !== '')
+                ? headerCompanyId
+                : userCompanyId;
+        console.log('Branch/Company resolution:', {
+            providedBranchId: branchId,
+            headerBranchId,
+            userBranchId,
+            resolvedBranchId: categoryBranchId,
+            providedCompanyId: companyId,
+            headerCompanyId,
+            userCompanyId,
+            resolvedCompanyId: categoryCompanyId
+        });
         if (!categoryBranchId) {
             console.log('Category creation failed: No branchId provided');
             return res.status(400).json({
@@ -324,6 +347,7 @@ const createCategory = async (req, res) => {
 exports.createCategory = createCategory;
 const updateCategory = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateCategorySchema.validate(req.body);
         if (error) {
@@ -385,6 +409,7 @@ const updateCategory = async (req, res) => {
 exports.updateCategory = updateCategory;
 const deleteCategory = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const category = await prisma.category.findUnique({
             where: { id },

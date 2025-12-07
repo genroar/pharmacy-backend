@@ -1,11 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSalesByPaymentMethod = exports.getTopSellingProducts = exports.getAdminDashboardStats = exports.getSalesChart = exports.getDashboardStats = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
-const prisma = new client_1.PrismaClient();
 const getDashboardStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId = '' } = req.query;
         const userId = req.user?.id;
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -22,7 +22,8 @@ const getDashboardStats = async (req, res) => {
                 createdAt: {
                     gte: today,
                     lt: tomorrow
-                }
+                },
+                status: { not: 'REFUNDED' }
             },
             _sum: {
                 totalAmount: true,
@@ -34,7 +35,10 @@ const getDashboardStats = async (req, res) => {
             }
         });
         const totalSales = await prisma.sale.aggregate({
-            where,
+            where: {
+                ...where,
+                status: { not: 'REFUNDED' }
+            },
             _sum: {
                 totalAmount: true,
                 subtotal: true,
@@ -141,6 +145,7 @@ const getDashboardStats = async (req, res) => {
 exports.getDashboardStats = getDashboardStats;
 const getSalesChart = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId = '', period = '7d', groupBy = 'day' } = req.query;
         const where = {};
         if (branchId) {
@@ -181,7 +186,7 @@ const getSalesChart = async (req, res) => {
                 }
             });
             const dailyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const dateKey = sale.createdAt.toISOString().split('T')[0];
                 if (!dailyData[dateKey]) {
                     dailyData[dateKey] = { total: 0, count: 0 };
@@ -207,7 +212,7 @@ const getSalesChart = async (req, res) => {
                 }
             });
             const weeklyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const weekStart = new Date(sale.createdAt);
                 weekStart.setDate(weekStart.getDate() - weekStart.getDay());
                 const weekKey = weekStart.toISOString().split('T')[0];
@@ -235,7 +240,7 @@ const getSalesChart = async (req, res) => {
                 }
             });
             const monthlyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const monthKey = `${sale.createdAt.getFullYear()}-${String(sale.createdAt.getMonth() + 1).padStart(2, '0')}`;
                 if (!monthlyData[monthKey]) {
                     monthlyData[monthKey] = { total: 0, count: 0 };
@@ -269,6 +274,7 @@ const getSalesChart = async (req, res) => {
 exports.getSalesChart = getSalesChart;
 const getAdminDashboardStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const totalRevenue = await prisma.sale.aggregate({
             _sum: {
                 totalAmount: true
@@ -338,7 +344,7 @@ const getAdminDashboardStats = async (req, res) => {
         const filteredLowStockProducts = lowStockProducts.filter(product => {
             const totalStock = product.batches.reduce((sum, batch) => sum + batch.quantity, 0);
             return totalStock <= product.minStock;
-        }).map(product => ({
+        }).map((product) => ({
             id: product.id,
             name: product.name,
             stock: product.batches.reduce((sum, batch) => sum + batch.quantity, 0),
@@ -363,7 +369,7 @@ const getAdminDashboardStats = async (req, res) => {
                 }
             }
         });
-        const branchStats = branchPerformance.map(branch => ({
+        const branchStats = branchPerformance.map((branch) => ({
             id: branch.id,
             name: branch.name,
             users: branch._count.users,
@@ -409,7 +415,7 @@ const getAdminDashboardStats = async (req, res) => {
                 recentSales,
                 lowStockProducts: filteredLowStockProducts,
                 branchPerformance: branchStats,
-                recentUsers: recentUsers.map(user => ({
+                recentUsers: recentUsers.map((user) => ({
                     id: user.id,
                     name: user.name,
                     username: user.username,
@@ -431,6 +437,7 @@ const getAdminDashboardStats = async (req, res) => {
 exports.getAdminDashboardStats = getAdminDashboardStats;
 const getTopSellingProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId = '', limit = 10 } = req.query;
         const where = {};
         if (branchId) {
@@ -455,7 +462,7 @@ const getTopSellingProducts = async (req, res) => {
             },
             take: parseInt(limit)
         });
-        const productIds = topProducts.map(item => item.productId);
+        const productIds = topProducts.map((item) => item.productId);
         const products = await prisma.product.findMany({
             where: {
                 id: {
@@ -480,8 +487,8 @@ const getTopSellingProducts = async (req, res) => {
                 }
             }
         });
-        const productMap = new Map(products.map(p => [p.id, p]));
-        const result = topProducts.map(item => {
+        const productMap = new Map(products.map((p) => [p.id, p]));
+        const result = topProducts.map((item) => {
             const product = productMap.get(item.productId);
             return {
                 productId: item.productId,
@@ -510,6 +517,7 @@ const getTopSellingProducts = async (req, res) => {
 exports.getTopSellingProducts = getTopSellingProducts;
 const getSalesByPaymentMethod = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId = '' } = req.query;
         const where = {};
         if (branchId) {

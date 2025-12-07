@@ -1,3 +1,4 @@
+import '../config/database.init';
 import { Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 export declare const getSales: (req: AuthRequest, res: Response) => Promise<void>;

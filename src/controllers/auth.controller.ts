@@ -1,12 +1,21 @@
+// CRITICAL: Import database initialization FIRST to ensure DATABASE_URL is set
+// This prevents Prisma schema validation errors when PrismaClient is imported
+import '../config/database.init';
+
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
 import { LoginData, CreateUserData } from '../models/user.model';
 import { validate } from '../middleware/validation.middleware';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
 
-const prisma = new PrismaClient();
+// Generate unique session token
+const generateSessionToken = (): string => {
+  return crypto.randomBytes(32).toString('hex');
+};
 
 // Validation schemas
 const loginSchema = Joi.object({
@@ -53,6 +62,9 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const { usernameOrEmail, password }: { usernameOrEmail: string; password: string } = req.body;
     console.log('🔍 Login attempt - Username/Email:', usernameOrEmail);
 
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
+
     // Find user by username or email (check both active and inactive users)
     const user = await prisma.user.findFirst({
       where: {
@@ -98,7 +110,19 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Generate JWT token
+    // Generate unique session token for single-session enforcement
+    const sessionToken = generateSessionToken();
+
+    // Update user with new session token (invalidates any previous sessions)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        sessionToken,
+        lastLoginAt: new Date()
+      }
+    });
+
+    // Generate JWT token with session token included
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET is not defined');
     }
@@ -109,11 +133,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         username: user.username,
         role: user.role,
         branchId: user.branchId,
-        createdBy: user.createdBy
+        createdBy: user.createdBy,
+        sessionToken // Include session token in JWT for validation
       },
       process.env.JWT_SECRET!,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
+
+    console.log('✅ Login successful for user:', usernameOrEmail);
 
     res.json({
       success: true,
@@ -154,6 +181,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     const { username, email, password, name, role, branchId, branchData } = req.body;
 
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
+
     // Convert empty branchId to null for ADMIN and SUPERADMIN users
     const processedBranchId = (branchId === '' || branchId === null || branchId === undefined) ? null : branchId;
 
@@ -192,6 +222,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     // For ADMIN and SUPERADMIN users, create user without branch/company initially
     // They will create companies and branches from the dashboard
+    // NEW: All new accounts are INACTIVE until SuperAdmin activates them
     if (role === 'ADMIN' || role === 'SUPERADMIN') {
       user = await prisma.user.create({
         data: {
@@ -202,7 +233,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: null, // No branch initially
           companyId: null, // No company initially
-          isActive: false, // New users are disabled by default
+          isActive: false, // NEW: Account needs activation by SuperAdmin
           createdBy: null // Will be updated to self-reference after user creation
         }
       });
@@ -236,6 +267,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       }
 
       // Create user with branch assignment
+      // NEW: All new accounts are INACTIVE until SuperAdmin activates them
       user = await prisma.user.create({
         data: {
           username,
@@ -245,7 +277,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: processedBranchId,
           companyId: branch.companyId,
-          isActive: false, // New users are disabled by default
+          isActive: false, // NEW: Account needs activation by SuperAdmin
           createdBy: null // Will be set by the admin who creates this user
         },
         include: {
@@ -255,37 +287,24 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       });
     }
 
-    // Generate JWT token
-    if (!process.env.JWT_SECRET) {
-      throw new Error('JWT_SECRET is not defined');
-    }
-
-    const token = (jwt.sign as any)(
-      {
-        userId: user.id,
-        username: user.username,
-        role: user.role,
-        branchId: user.branchId,
-        createdBy: user.createdBy
-      },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    // NEW: Return success but with pending activation message
+    // Do NOT generate JWT token - user cannot login until activated
+    console.log('✅ Account created (pending activation):', username);
 
     res.status(201).json({
       success: true,
+      pendingActivation: true, // Flag for frontend to show special message
+      message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
       data: {
         user: {
           id: user.id,
           username: user.username,
           name: user.name,
           role: user.role,
-          branchId: user.branchId,
-          createdBy: user.createdBy,
-          isActive: user.isActive,
+          isActive: user.isActive, // Will be false
           email: user.email
-        },
-        token
+        }
+        // NO token - user cannot login until activated
       }
     });
   } catch (error) {
@@ -306,6 +325,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 export const getProfile = async (req: Request, res: Response): Promise<void> => {
   try {
     const userId = (req as any).user.id;
+
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
 
     const user = await prisma.user.findUnique({
       where: { id: userId }
@@ -352,6 +374,9 @@ export const changePassword = async (req: Request, res: Response): Promise<void>
 
     const userId = (req as any).user.id;
     const { currentPassword, newPassword } = req.body;
+
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
 
     // Get user with current password
     const user = await prisma.user.findUnique({
@@ -419,6 +444,9 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
 
     const userId = (req as any).user.id;
     const { name, email, profileImage } = req.body;
+
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
 
     // Check if email is already taken by another user
     if (email) {

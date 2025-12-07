@@ -4,11 +4,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getStockMovements = exports.bulkDeleteProducts = exports.activateAllProducts = exports.getAllProducts = exports.bulkImportProducts = exports.updateStock = exports.deleteProduct = exports.updateProduct = exports.createProduct = exports.getProduct = exports.getProducts = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const sse_routes_1 = require("../routes/sse.routes");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 function serializeBigInt(obj) {
     if (obj === null || obj === undefined) {
         return obj;
@@ -69,6 +68,7 @@ const updateProductSchema = joi_1.default.object({
 });
 const getProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', category = '', categoryType = '', branchId = '', lowStock = false, includeInactive = false } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -89,9 +89,10 @@ const getProducts = async (req, res) => {
         }
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
+                { name: { contains: search } },
                 { barcode: { contains: search } },
-                { description: { contains: search, mode: 'insensitive' } }
+                { description: { contains: search } },
+                { formula: { contains: search } }
             ];
         }
         const [products, total] = await Promise.all([
@@ -171,6 +172,7 @@ const getProducts = async (req, res) => {
 exports.getProducts = getProducts;
 const getProduct = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const product = await prisma.product.findUnique({
             where: { id },
@@ -211,6 +213,7 @@ const getProduct = async (req, res) => {
 exports.getProduct = getProduct;
 const createProduct = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('=== CREATE PRODUCT REQUEST ===');
         console.log('Request body:', req.body);
         console.log('Request headers:', req.headers);
@@ -335,6 +338,7 @@ const createProduct = async (req, res) => {
 exports.createProduct = createProduct;
 const updateProduct = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateProductSchema.validate(req.body);
         if (error) {
@@ -415,6 +419,7 @@ const updateProduct = async (req, res) => {
 exports.updateProduct = updateProduct;
 const deleteProduct = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const product = await prisma.product.findUnique({
             where: { id }
@@ -466,6 +471,7 @@ const deleteProduct = async (req, res) => {
 exports.deleteProduct = deleteProduct;
 const updateStock = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { type, quantity, reason, reference } = req.body;
         if (!type || !quantity) {
@@ -499,6 +505,7 @@ const updateStock = async (req, res) => {
 exports.updateStock = updateStock;
 const bulkImportProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('=== BULK IMPORT REQUEST RECEIVED ===');
         console.log('Request body:', req.body);
         console.log('Request headers:', req.headers);
@@ -839,6 +846,7 @@ const bulkImportProducts = async (req, res) => {
 exports.bulkImportProducts = bulkImportProducts;
 const getAllProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const products = await prisma.product.findMany({
             include: {
                 category: true,
@@ -871,6 +879,7 @@ const getAllProducts = async (req, res) => {
 exports.getAllProducts = getAllProducts;
 const activateAllProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const result = await prisma.product.updateMany({
             where: {},
             data: {
@@ -895,6 +904,7 @@ const activateAllProducts = async (req, res) => {
 exports.activateAllProducts = activateAllProducts;
 const bulkDeleteProducts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { productIds } = req.body;
         if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
             return res.status(400).json({
@@ -956,6 +966,7 @@ const bulkDeleteProducts = async (req, res) => {
 exports.bulkDeleteProducts = bulkDeleteProducts;
 const getStockMovements = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 50, productId = '', startDate = '', endDate = '', type = '', branchId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);

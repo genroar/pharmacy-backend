@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const startShiftSchema = Joi.object({
@@ -30,6 +28,7 @@ const updateShiftSchema = Joi.object({
 // Start a new shift
 export const startShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = startShiftSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -121,6 +120,7 @@ export const startShift = async (req: Request, res: Response) => {
 // End a shift
 export const endShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { error } = endShiftSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -217,6 +217,7 @@ export const endShift = async (req: Request, res: Response) => {
 // Get shifts
 export const getShifts = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -306,6 +307,7 @@ export const getShifts = async (req: Request, res: Response) => {
 // Get active shift for employee
 export const getActiveShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { employeeId } = req.params;
 
     const activeShift = await prisma.shift.findFirst({
@@ -347,9 +349,10 @@ export const getActiveShift = async (req: Request, res: Response) => {
 // Update shift (cash in/out)
 export const updateShift = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const { error } = updateShiftSchema.validate(req.body);
-    
+
     if (error) {
       return res.status(400).json({
         success: false,
@@ -426,6 +429,7 @@ export const updateShift = async (req: Request, res: Response) => {
 // Get shift statistics
 export const getShiftStats = async (req: Request, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { branchId, startDate, endDate } = req.query;
 
     const where: any = {};

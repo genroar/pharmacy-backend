@@ -1,9 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateUserRole = exports.getAllowedActions = exports.checkPermission = exports.getUserPermissions = exports.getRolePermissions = exports.getRoles = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const permissions_1 = require("../config/permissions");
-const prisma = new client_1.PrismaClient();
 const getRoles = async (req, res) => {
     try {
         if (!req.user) {
@@ -198,6 +197,7 @@ const updateUserRole = async (req, res) => {
             });
             return;
         }
+        const prisma = await (0, db_util_1.getPrisma)();
         const updatedUser = await prisma.user.update({
             where: { id: userId },
             data: { role },

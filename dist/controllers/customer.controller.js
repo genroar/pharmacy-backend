@@ -4,16 +4,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerPurchaseHistory = exports.deleteCustomer = exports.updateCustomer = exports.createCustomer = exports.getCustomer = exports.getCustomers = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const sse_routes_1 = require("../routes/sse.routes");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createCustomerSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     phone: joi_1.default.string().required(),
     email: joi_1.default.string().email().allow('').optional(),
     address: joi_1.default.string().allow('').optional(),
-    branchId: joi_1.default.string().required()
+    branchId: joi_1.default.string().allow('').optional()
 });
 const updateCustomerSchema = joi_1.default.object({
     name: joi_1.default.string(),
@@ -25,17 +24,36 @@ const updateCustomerSchema = joi_1.default.object({
 });
 const getCustomers = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', branchId = '', vip = false, createdByRole = '' } = req.query;
+        console.log('🔍 getCustomers - User context:', {
+            id: req.user?.id,
+            role: req.user?.role,
+            createdBy: req.user?.createdBy,
+            branchId: req.user?.branchId,
+            companyId: req.user?.companyId,
+            selectedBranchId: req.user?.selectedBranchId,
+            selectedCompanyId: req.user?.selectedCompanyId
+        });
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {
             isActive: true
         };
-        if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
+        const createdByFilter = req.user?.createdBy || req.user?.id;
+        if (createdByFilter) {
+            where.createdBy = createdByFilter;
         }
-        else if (req.user?.id) {
-            where.createdBy = req.user.id;
+        else {
+            console.warn('⚠️ getCustomers - No user context found, returning empty results');
+            return res.json({
+                success: true,
+                data: {
+                    customers: [],
+                    pagination: { page: Number(page), limit: Number(limit), total: 0, pages: 0 }
+                },
+                warning: 'No user context found. Please ensure you are properly authenticated.'
+            });
         }
         if (branchId && typeof branchId === 'string' && branchId.trim() !== '') {
             where.branchId = branchId;
@@ -44,10 +62,11 @@ const getCustomers = async (req, res) => {
             where.isVIP = true;
         }
         if (search) {
+            const searchLower = search.toLowerCase();
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
+                { name: { contains: search } },
                 { phone: { contains: search } },
-                { email: { contains: search, mode: 'insensitive' } }
+                { email: { contains: search } }
             ];
         }
         if (createdByRole && typeof createdByRole === 'string' && createdByRole.trim() !== '') {
@@ -133,16 +152,23 @@ const getCustomers = async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Get customers error:', error);
+        console.error('❌ Get customers error:', error);
+        console.error('❌ Error details:', {
+            message: error.message,
+            stack: error.stack,
+            user: req.user
+        });
         return res.status(500).json({
             success: false,
-            message: 'Internal server error'
+            message: 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 };
 exports.getCustomers = getCustomers;
 const getCustomer = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const customer = await prisma.customer.findUnique({
             where: { id },
@@ -192,8 +218,26 @@ const getCustomer = async (req, res) => {
 exports.getCustomer = getCustomer;
 const createCustomer = async (req, res) => {
     try {
-        console.log('Customer creation request body:', req.body);
-        const { error } = createCustomerSchema.validate(req.body);
+        const prisma = await (0, db_util_1.getPrisma)();
+        console.log('📝 Customer creation request received');
+        console.log('📝 Request body:', JSON.stringify(req.body, null, 2));
+        console.log('📝 User context:', {
+            id: req.user?.id,
+            role: req.user?.role,
+            branchId: req.user?.branchId,
+            companyId: req.user?.companyId,
+            selectedBranchId: req.user?.selectedBranchId,
+            selectedCompanyId: req.user?.selectedCompanyId,
+            createdBy: req.user?.createdBy
+        });
+        const normalizedBody = {
+            ...req.body,
+            phone: req.body.phone?.trim().replace(/\\+$/, '') || req.body.phone,
+            email: req.body.email?.trim() || undefined,
+            address: req.body.address?.trim() || undefined,
+            branchId: req.body.branchId?.trim() || undefined,
+        };
+        const { error } = createCustomerSchema.validate(normalizedBody);
         if (error) {
             console.log('Customer validation error:', error.details);
             return res.status(400).json({
@@ -202,36 +246,128 @@ const createCustomer = async (req, res) => {
                 errors: error.details.map(detail => detail.message)
             });
         }
-        const customerData = req.body;
+        let branchId = normalizedBody.branchId || req.user?.selectedBranchId || req.user?.branchId;
+        let companyId = req.user?.selectedCompanyId || req.user?.companyId;
+        console.log('🔍 Initial branch/company context:', { branchId, companyId });
+        console.log('🔍 User context:', {
+            id: req.user?.id,
+            role: req.user?.role,
+            branchId: req.user?.branchId,
+            companyId: req.user?.companyId,
+            selectedBranchId: req.user?.selectedBranchId,
+            selectedCompanyId: req.user?.selectedCompanyId,
+            createdBy: req.user?.createdBy
+        });
+        if (!branchId || !companyId) {
+            const lookupUserId = req.user?.createdBy || req.user?.id;
+            if (lookupUserId) {
+                console.log('🔍 Looking up user for branch/company context:', lookupUserId);
+                const lookupUser = await prisma.user.findUnique({
+                    where: { id: lookupUserId },
+                    select: { branchId: true, companyId: true, role: true }
+                });
+                console.log('🔍 User found:', lookupUser);
+                if (lookupUser) {
+                    branchId = branchId || lookupUser.branchId || undefined;
+                    companyId = companyId || lookupUser.companyId || undefined;
+                    console.log('🔍 Updated branch/company from user lookup:', { branchId, companyId });
+                }
+            }
+        }
+        if (!branchId && companyId) {
+            console.log('🔍 Looking for first branch for company:', companyId);
+            const firstBranch = await prisma.branch.findFirst({
+                where: {
+                    companyId: companyId,
+                    isActive: true
+                },
+                select: { id: true, companyId: true }
+            });
+            console.log('🔍 First branch found:', firstBranch);
+            if (firstBranch) {
+                branchId = firstBranch.id;
+                companyId = firstBranch.companyId;
+                console.log('🔍 Updated branch/company from first branch:', { branchId, companyId });
+            }
+        }
+        if (!branchId) {
+            console.log('🔍 No branchId found, looking for any active branch...');
+            const anyBranch = await prisma.branch.findFirst({
+                where: { isActive: true },
+                select: { id: true, companyId: true },
+                orderBy: { createdAt: 'asc' }
+            });
+            if (anyBranch) {
+                branchId = anyBranch.id;
+                companyId = anyBranch.companyId;
+                console.log('🔍 Using first available branch:', { branchId, companyId });
+            }
+        }
+        if (!branchId || !companyId) {
+            console.error('❌ Missing branch or company context:', { branchId, companyId });
+            console.error('❌ User context:', req.user);
+            return res.status(400).json({
+                success: false,
+                message: 'Branch and company context required. Please ensure you have proper access permissions and that at least one branch exists in the system.',
+                error: 'MISSING_BRANCH_CONTEXT',
+                details: {
+                    branchId: branchId || null,
+                    companyId: companyId || null,
+                    userRole: req.user?.role,
+                    userBranchId: req.user?.branchId,
+                    userCompanyId: req.user?.companyId
+                }
+            });
+        }
+        console.log('🔍 Verifying branch exists:', branchId);
+        const branch = await prisma.branch.findUnique({
+            where: { id: branchId },
+            select: { companyId: true }
+        });
+        if (!branch) {
+            console.error('❌ Branch not found:', branchId);
+            return res.status(400).json({
+                success: false,
+                message: 'Branch not found'
+            });
+        }
+        console.log('✅ Branch verified:', { branchId, companyId: branch.companyId });
+        const finalCompanyId = branch.companyId;
+        const customerData = {
+            ...normalizedBody,
+            branchId
+        };
         const existingCustomer = await prisma.customer.findFirst({
             where: {
-                phone: customerData.phone,
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
+                phone: customerData.phone
             }
         });
-        console.log('Existing customer check:', existingCustomer);
+        console.log('🔍 Existing customer check for phone:', customerData.phone, 'Result:', existingCustomer ? existingCustomer.id : 'Not found');
         if (existingCustomer) {
-            console.log('Customer already exists, returning existing customer:', existingCustomer);
+            console.log('ℹ️  Customer already exists, returning existing customer:', existingCustomer.id);
             return res.status(200).json({
                 success: true,
                 data: existingCustomer,
                 message: 'Customer already exists'
             });
         }
-        const branch = await prisma.branch.findUnique({
-            where: { id: customerData.branchId },
-            select: { companyId: true }
+        console.log('🔍 Creating customer with data:', {
+            name: customerData.name,
+            phone: customerData.phone,
+            email: customerData.email,
+            address: customerData.address,
+            branchId: branchId,
+            companyId: finalCompanyId,
+            createdBy: req.user?.createdBy || req.user?.id
         });
-        if (!branch) {
-            return res.status(400).json({
-                success: false,
-                message: 'Branch not found'
-            });
-        }
         const customer = await prisma.customer.create({
             data: {
-                ...customerData,
-                companyId: branch.companyId,
+                name: customerData.name,
+                phone: customerData.phone,
+                email: customerData.email || null,
+                address: customerData.address || null,
+                branchId: branchId,
+                companyId: finalCompanyId,
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             },
             include: {
@@ -243,26 +379,45 @@ const createCustomer = async (req, res) => {
                 }
             }
         });
+        console.log('✅ Customer created successfully:', customer.id);
         const createdBy = req.user?.createdBy || req.user?.id;
         if (createdBy) {
             (0, sse_routes_1.notifyCustomerChange)(createdBy, 'created', customer);
         }
         return res.status(201).json({
             success: true,
-            data: customer
+            data: customer,
+            message: 'Customer created successfully'
         });
     }
     catch (error) {
-        console.error('Create customer error:', error);
+        console.error('❌ Create customer error:', error);
+        console.error('❌ Error details:', {
+            message: error.message,
+            code: error.code,
+            meta: error.meta,
+            stack: error.stack,
+            user: req.user
+        });
+        if (error.code === 'P2002') {
+            return res.status(400).json({
+                success: false,
+                message: 'A customer with this phone number already exists',
+                error: 'DUPLICATE_PHONE'
+            });
+        }
         return res.status(500).json({
             success: false,
-            message: 'Internal server error'
+            message: 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            errorCode: error.code || 'UNKNOWN_ERROR'
         });
     }
 };
 exports.createCustomer = createCustomer;
 const updateCustomer = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateCustomerSchema.validate(req.body);
         if (error) {
@@ -324,6 +479,7 @@ const updateCustomer = async (req, res) => {
 exports.updateCustomer = updateCustomer;
 const deleteCustomer = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const customer = await prisma.customer.findUnique({
             where: { id }
@@ -354,6 +510,7 @@ const deleteCustomer = async (req, res) => {
 exports.deleteCustomer = deleteCustomer;
 const getCustomerPurchaseHistory = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { page = 1, limit = 10 } = req.query;
         const skip = (Number(page) - 1) * Number(limit);

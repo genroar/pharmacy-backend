@@ -2,9 +2,9 @@ import { Router, Request, Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 // Store active connections
 const activeConnections = new Map<string, Response>();
@@ -22,6 +22,9 @@ const authenticateSSE = async (req: Request): Promise<{ userId: string; createdB
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+
+    // Get database client (works with SQLite or PostgreSQL)
+    const prisma = await getPrisma();
 
     // Verify user still exists and is active
     const user = await prisma.user.findUnique({

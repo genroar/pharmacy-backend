@@ -5,9 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activateUser = exports.deleteUser = exports.updateUser = exports.createUser = exports.getUser = exports.getUsers = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const createUserSchema = joi_1.default.object({
     username: joi_1.default.string().min(3).max(30).required(),
     email: joi_1.default.string().pattern(/^[^\s@]+@[^\s@]+$/).required().messages({
@@ -29,36 +28,50 @@ const updateUserSchema = joi_1.default.object({
 });
 const getUsers = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', role = '', branchId = '', isActive = true } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {};
+        const selectedCompanyId = req.headers['x-company-id'] || req.user?.selectedCompanyId;
+        const selectedBranchId = req.headers['x-branch-id'] || req.user?.selectedBranchId;
         console.log('🔍 getUsers - User context:', {
             userId: req.user?.id,
             role: req.user?.role,
-            selectedCompanyId: req.user?.selectedCompanyId,
-            selectedBranchId: req.user?.selectedBranchId,
+            headerCompanyId: req.headers['x-company-id'],
+            headerBranchId: req.headers['x-branch-id'],
+            selectedCompanyId,
+            selectedBranchId,
             createdBy: req.user?.createdBy
         });
-        if (req.user?.selectedCompanyId) {
-            where.branch = {
-                companyId: req.user.selectedCompanyId
-            };
-            console.log('🏢 Filtering users by selected company through branch:', req.user.selectedCompanyId);
-        }
-        else {
-            console.log('⚠️ No selectedCompanyId found in user context');
-        }
         if (req.user?.role === 'SUPERADMIN') {
+            if (selectedCompanyId) {
+                where.branch = { companyId: selectedCompanyId };
+            }
+            if (selectedBranchId) {
+                where.branchId = selectedBranchId;
+            }
         }
-        else if (req.user?.selectedCompanyId) {
-            console.log('🏢 Company selected - showing all users from selected company, ignoring createdBy filter');
+        else if (req.user?.role === 'ADMIN') {
+            if (selectedBranchId) {
+                where.branchId = selectedBranchId;
+                console.log('🏢 Admin filtering users by selected branch:', selectedBranchId);
+            }
+            else if (selectedCompanyId) {
+                where.branch = { companyId: selectedCompanyId };
+                console.log('🏢 Admin filtering users by selected company:', selectedCompanyId);
+            }
+            else {
+                where.createdBy = req.user?.id;
+            }
         }
-        else if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
-        }
-        else {
-            where.createdBy = req.user?.id;
+        else if (req.user?.role === 'MANAGER' || req.user?.role === 'CASHIER') {
+            if (req.user?.branchId) {
+                where.branchId = req.user.branchId;
+            }
+            else {
+                where.branchId = 'no-access';
+            }
         }
         if (isActive !== 'all') {
             where.isActive = isActive === 'true' || isActive === true;
@@ -71,9 +84,9 @@ const getUsers = async (req, res) => {
         }
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { username: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } }
+                { name: { contains: search } },
+                { username: { contains: search } },
+                { email: { contains: search } }
             ];
         }
         console.log('🔍 getUsers - Final where clause:', JSON.stringify(where, null, 2));
@@ -122,6 +135,7 @@ const getUsers = async (req, res) => {
 exports.getUsers = getUsers;
 const getUser = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const where = { id };
         if (req.user?.role === 'SUPERADMIN') {
@@ -166,6 +180,7 @@ const getUser = async (req, res) => {
 exports.getUser = getUser;
 const createUser = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('=== CREATE USER REQUEST ===');
         console.log('Request body:', req.body);
         console.log('User context:', { role: req.user?.role, createdBy: req.user?.createdBy, branchId: req.user?.branchId });
@@ -179,18 +194,35 @@ const createUser = async (req, res) => {
             });
         }
         const userData = req.body;
-        const existingUser = await prisma.user.findFirst({
+        const branchId = userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null;
+        const existingUserByUsername = await prisma.user.findFirst({
             where: {
-                OR: [
-                    { username: userData.username },
-                    { email: userData.email }
-                ]
+                username: userData.username,
+                branchId: branchId
             }
         });
-        if (existingUser) {
+        if (existingUserByUsername) {
+            console.log('❌ User with username already exists in this branch:', userData.username);
             return res.status(400).json({
                 success: false,
-                message: 'User with this username or email already exists'
+                message: `User with username "${userData.username}" already exists in this branch`,
+                field: 'username',
+                code: 'USER_EXISTS'
+            });
+        }
+        const existingUserByEmail = await prisma.user.findFirst({
+            where: {
+                email: userData.email,
+                branchId: branchId
+            }
+        });
+        if (existingUserByEmail) {
+            console.log('❌ User with email already exists in this branch:', userData.email);
+            return res.status(400).json({
+                success: false,
+                message: `User with email "${userData.email}" already exists in this branch`,
+                field: 'email',
+                code: 'USER_EXISTS'
             });
         }
         if (userData.branchId && userData.branchId.trim() !== '') {
@@ -208,13 +240,37 @@ const createUser = async (req, res) => {
         const currentUserId = req.user?.id;
         const currentUserAdminId = req.user?.createdBy;
         const currentUserCompanyId = req.user?.companyId;
+        const createdByValue = currentUserAdminId || currentUserId;
+        let companyIdValue = currentUserCompanyId;
+        const branchIdValue = userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null;
+        if (branchIdValue && !companyIdValue) {
+            const branch = await prisma.branch.findUnique({
+                where: { id: branchIdValue },
+                select: { companyId: true }
+            });
+            if (branch) {
+                companyIdValue = branch.companyId;
+            }
+        }
+        console.log('Creating user with isolation data:', {
+            createdBy: createdByValue,
+            companyId: companyIdValue,
+            branchId: branchIdValue,
+            currentUserId,
+            currentUserAdminId,
+            currentUserCompanyId
+        });
         const user = await prisma.user.create({
             data: {
-                ...userData,
+                username: userData.username,
+                email: userData.email,
                 password: hashedPassword,
-                createdBy: currentUserAdminId || currentUserId,
-                companyId: currentUserCompanyId,
-                branchId: userData.branchId && userData.branchId.trim() !== '' ? userData.branchId : null
+                name: userData.name,
+                role: userData.role,
+                branchId: branchIdValue,
+                companyId: companyIdValue,
+                createdBy: createdByValue,
+                isActive: true
             },
             include: {
                 branch: {
@@ -233,15 +289,30 @@ const createUser = async (req, res) => {
     }
     catch (error) {
         console.error('Create user error:', error);
+        console.error('Error details:', {
+            message: error?.message,
+            code: error?.code,
+            meta: error?.meta
+        });
+        if (error?.code === 'P2002') {
+            const field = error?.meta?.target?.[0] || 'field';
+            return res.status(400).json({
+                success: false,
+                message: `A user with this ${field} already exists`,
+                code: 'USER_EXISTS',
+                field
+            });
+        }
         return res.status(500).json({
             success: false,
-            message: 'Internal server error'
+            message: error?.message || 'Internal server error'
         });
     }
 };
 exports.createUser = createUser;
 const updateUser = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateUserSchema.validate(req.body);
         if (error) {
@@ -309,6 +380,7 @@ const updateUser = async (req, res) => {
 exports.updateUser = updateUser;
 const deleteUser = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const user = await prisma.user.findUnique({
             where: { id }
@@ -338,6 +410,7 @@ const deleteUser = async (req, res) => {
 exports.deleteUser = deleteUser;
 const activateUser = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { isActive } = req.body;
         const user = await prisma.user.findUnique({

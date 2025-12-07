@@ -1,11 +1,12 @@
-import { UserRole } from '@prisma/client';
+// Enums removed - using string types for SQLite compatibility
+export type UserRole = 'SUPERADMIN' | 'ADMIN' | 'MANAGER' | 'CASHIER';
 
 export interface CreateUserData {
   username: string;
   email: string;
   password: string;
   name: string;
-  role: UserRole;
+  role: UserRole | string;
   branchId: string;
 }
 
@@ -14,7 +15,7 @@ export interface UpdateUserData {
   email?: string;
   password?: string;
   name?: string;
-  role?: UserRole;
+  role?: UserRole | string;
   branchId?: string;
   isActive?: boolean;
 }

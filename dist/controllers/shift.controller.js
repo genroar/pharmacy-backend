@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getShiftStats = exports.updateShift = exports.getActiveShift = exports.getShifts = exports.endShift = exports.startShift = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const startShiftSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
     branchId: joi_1.default.string().required(),
@@ -28,6 +27,7 @@ const updateShiftSchema = joi_1.default.object({
 });
 const startShift = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = startShiftSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -108,6 +108,7 @@ const startShift = async (req, res) => {
 exports.startShift = startShift;
 const endShift = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = endShiftSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -194,6 +195,7 @@ const endShift = async (req, res) => {
 exports.endShift = endShift;
 const getShifts = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, employeeId = '', branchId = '', status = '', startDate = '', endDate = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -267,6 +269,7 @@ const getShifts = async (req, res) => {
 exports.getShifts = getShifts;
 const getActiveShift = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { employeeId } = req.params;
         const activeShift = await prisma.shift.findFirst({
             where: {
@@ -306,6 +309,7 @@ const getActiveShift = async (req, res) => {
 exports.getActiveShift = getActiveShift;
 const updateShift = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateShiftSchema.validate(req.body);
         if (error) {
@@ -374,6 +378,7 @@ const updateShift = async (req, res) => {
 exports.updateShift = updateShift;
 const getShiftStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId, startDate, endDate } = req.query;
         const where = {};
         if (branchId) {

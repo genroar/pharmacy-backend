@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
+import { getPrisma } from '../utils/db.util';
 
 // Validation schemas
 const createCompanySchema = Joi.object({
@@ -25,6 +23,7 @@ const updateCompanySchema = Joi.object({
 // Get all companies for the authenticated user
 export const getCompanies = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const userId = (req as any).user.id;
     const userRole = (req as any).user.role;
 
@@ -97,6 +96,7 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
 // Get a single company by ID
 export const getCompany = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const userId = (req as any).user.id;
     const userRole = (req as any).user.role;
@@ -159,8 +159,22 @@ export const getCompany = async (req: Request, res: Response): Promise<void> => 
 // Create a new company
 export const createCompany = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { error } = createCompanySchema.validate(req.body);
+    const prisma = await getPrisma();
+    console.log('🔍 Create company request body:', JSON.stringify(req.body, null, 2));
+
+    // Normalize empty strings to undefined for optional fields
+    const normalizedBody = {
+      ...req.body,
+      description: req.body.description?.trim() || undefined,
+      address: req.body.address?.trim() || undefined,
+      phone: req.body.phone?.trim() || undefined,
+      email: req.body.email?.trim() || undefined,
+    };
+
+    const { error } = createCompanySchema.validate(normalizedBody);
     if (error) {
+      console.log('❌ Validation error details:', error.details);
+      console.log('❌ Validation errors:', error.details.map(detail => detail.message));
       res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -170,7 +184,7 @@ export const createCompany = async (req: Request, res: Response): Promise<void> 
     }
 
     const userId = (req as any).user.id;
-    const { name, description, address, phone, email } = req.body;
+    const { name, description, address, phone, email } = normalizedBody;
 
     // Check if company name already exists
     const existingCompany = await prisma.company.findUnique({
@@ -223,6 +237,7 @@ export const createCompany = async (req: Request, res: Response): Promise<void> 
 // Update a company
 export const updateCompany = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { error } = updateCompanySchema.validate(req.body);
     if (error) {
       res.status(400).json({
@@ -316,6 +331,7 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
 // Delete a company (soft delete)
 export const deleteCompany = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const userId = (req as any).user.id;
     const userRole = (req as any).user.role;
@@ -388,6 +404,7 @@ export const deleteCompany = async (req: Request, res: Response): Promise<void> 
 // Update company business type
 export const updateCompanyBusinessType = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const userId = (req as any).user.id;
     const userRole = (req as any).user.role;
@@ -458,6 +475,7 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
 // Get company statistics
 export const getCompanyStats = async (req: Request, res: Response): Promise<void> => {
   try {
+    const prisma = await getPrisma();
     const { id } = req.params;
     const userId = (req as any).user.id;
     const userRole = (req as any).user.role;

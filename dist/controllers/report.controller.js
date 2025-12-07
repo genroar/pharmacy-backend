@@ -1,9 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDashboardData = exports.getSalesByPaymentMethod = exports.getTopSellingProducts = exports.getProductPerformanceReport = exports.getCustomerReport = exports.getInventoryReport = exports.getSalesReport = void 0;
+require("../config/database.init");
 const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
-const prisma = new client_1.PrismaClient();
 function getWeekNumber(date) {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
     const dayNum = d.getUTCDay() || 7;
@@ -13,6 +14,7 @@ function getWeekNumber(date) {
 }
 const getSalesReport = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { startDate = '', endDate = '', branchId = '', groupBy = 'day' } = req.query;
         console.log('Sales report request:', { startDate, endDate, branchId, groupBy });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
@@ -59,6 +61,7 @@ const getSalesReport = async (req, res) => {
                 console.log('No sales found, showing empty result');
             }
         }
+        where.status = { not: 'REFUNDED' };
         console.log('Sales report where clause:', where);
         const salesSummary = await prisma.sale.aggregate({
             where,
@@ -159,7 +162,7 @@ const getSalesReport = async (req, res) => {
                 }
             });
             const monthlyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const monthKey = `${sale.createdAt.getFullYear()}-${String(sale.createdAt.getMonth() + 1).padStart(2, '0')}`;
                 if (!monthlyData[monthKey]) {
                     monthlyData[monthKey] = { total: 0, count: 0 };
@@ -185,7 +188,7 @@ const getSalesReport = async (req, res) => {
                 }
             });
             const weeklyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const date = new Date(sale.createdAt);
                 const year = date.getFullYear();
                 const weekNumber = getWeekNumber(date);
@@ -214,7 +217,7 @@ const getSalesReport = async (req, res) => {
                 }
             });
             const yearlyData = {};
-            sales.forEach(sale => {
+            sales.forEach((sale) => {
                 const year = sale.createdAt.getFullYear().toString();
                 if (!yearlyData[year]) {
                     yearlyData[year] = { total: 0, count: 0 };
@@ -258,6 +261,7 @@ exports.getSalesReport = getSalesReport;
 const getInventoryReport = async (req, res) => {
     try {
         const { branchId = '', lowStock = false } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Inventory report request:', { branchId, lowStock });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {
@@ -327,6 +331,7 @@ exports.getInventoryReport = getInventoryReport;
 const getCustomerReport = async (req, res) => {
     try {
         const { startDate = '', endDate = '', branchId = '', vip = false } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Customer report request:', { startDate, endDate, branchId, vip });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {
@@ -421,6 +426,7 @@ exports.getCustomerReport = getCustomerReport;
 const getProductPerformanceReport = async (req, res) => {
     try {
         const { startDate = '', endDate = '', branchId = '', categoryId = '' } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Product performance report request:', { startDate, endDate, branchId, categoryId });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -510,7 +516,7 @@ const getProductPerformanceReport = async (req, res) => {
         }));
         const categoryStats = {};
         console.log('Category performance data:', categoryPerformance);
-        categoryPerformance.forEach(item => {
+        categoryPerformance.forEach((item) => {
             const category = item.category;
             if (!categoryStats[category]) {
                 categoryStats[category] = { quantity: 0, revenue: 0, count: 0 };
@@ -556,6 +562,7 @@ exports.getProductPerformanceReport = getProductPerformanceReport;
 const getTopSellingProducts = async (req, res) => {
     try {
         const { branchId = '', limit = 10 } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Top selling products request:', { branchId, limit });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -619,6 +626,7 @@ exports.getTopSellingProducts = getTopSellingProducts;
 const getSalesByPaymentMethod = async (req, res) => {
     try {
         const { branchId = '' } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Sales by payment method request:', { branchId });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -657,6 +665,7 @@ exports.getSalesByPaymentMethod = getSalesByPaymentMethod;
 const getDashboardData = async (req, res) => {
     try {
         const { branchId = '' } = req.query;
+        const prisma = await (0, db_util_1.getPrisma)();
         console.log('Dashboard data request:', { branchId });
         console.log('User context:', { userId: req.user?.id, createdBy: req.user?.createdBy, role: req.user?.role });
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
@@ -690,7 +699,8 @@ const getDashboardData = async (req, res) => {
             createdAt: {
                 gte: today,
                 lt: tomorrow
-            }
+            },
+            status: { not: 'REFUNDED' }
         };
         const todaySales = await prisma.sale.aggregate({
             where: todayWhere,
@@ -713,7 +723,8 @@ const getDashboardData = async (req, res) => {
             createdAt: {
                 gte: yesterday,
                 lt: yesterdayEnd
-            }
+            },
+            status: { not: 'REFUNDED' }
         };
         const yesterdaySales = await prisma.sale.aggregate({
             where: yesterdayWhere,
@@ -731,7 +742,8 @@ const getDashboardData = async (req, res) => {
             createdAt: {
                 gte: startOfMonth,
                 lte: endOfMonth
-            }
+            },
+            status: { not: 'REFUNDED' }
         };
         const monthSales = await prisma.sale.aggregate({
             where: monthWhere,
@@ -746,6 +758,7 @@ const getDashboardData = async (req, res) => {
         const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
         const lastMonthWhere = {
             ...where,
+            status: { not: 'REFUNDED' },
             createdAt: {
                 gte: startOfLastMonth,
                 lte: endOfLastMonth

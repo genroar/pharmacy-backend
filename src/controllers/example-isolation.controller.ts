@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest, buildAdminWhereClause, buildBranchWhereClause } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
 
 /**
  * Example: Get Sales with Data Isolation
@@ -10,6 +8,7 @@ const prisma = new PrismaClient();
  */
 export const getSales = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -89,6 +88,7 @@ export const getSales = async (req: AuthRequest, res: Response) => {
  */
 export const createSale = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const saleData = req.body;
 
     // Create sale with createdBy for data isolation
@@ -129,6 +129,7 @@ export const createSale = async (req: AuthRequest, res: Response) => {
  */
 export const getCustomers = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const {
       page = 1,
       limit = 10,
@@ -145,9 +146,9 @@ export const getCustomers = async (req: AuthRequest, res: Response) => {
     // Add search filtering
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { phone: { contains: search as string, mode: 'insensitive' } },
-        { email: { contains: search as string, mode: 'insensitive' } }
+        { name: { contains: search as string } },
+        { phone: { contains: search as string } },
+        { email: { contains: search as string } }
       ];
     }
 
@@ -196,6 +197,7 @@ export const getCustomers = async (req: AuthRequest, res: Response) => {
  */
 export const getSalesReport = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { startDate, endDate, branchId } = req.query;
 
     // Build where clause with data isolation

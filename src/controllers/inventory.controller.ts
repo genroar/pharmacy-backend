@@ -1,12 +1,11 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
 
 // Get inventory summary (stock levels by product)
 export const getInventorySummary = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     const { page = 1, limit = 10, search, categoryId, lowStock } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
@@ -43,9 +42,10 @@ export const getInventorySummary = async (req: AuthRequest, res: Response) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search as string, mode: 'insensitive' } },
-        { sku: { contains: search as string, mode: 'insensitive' } },
-        { barcode: { contains: search as string, mode: 'insensitive' } },
+        { name: { contains: search as string } },
+        { sku: { contains: search as string } },
+        { barcode: { contains: search as string } },
+        { formula: { contains: search as string } } // Search by formula/composition
       ];
     }
 
@@ -150,11 +150,22 @@ export const getInventorySummary = async (req: AuthRequest, res: Response) => {
 // Get inventory by batches
 export const getInventoryByBatches = async (req: AuthRequest, res: Response) => {
   try {
-    const { page = 1, limit = 10, search, productId, nearExpiry, expired } = req.query;
+    const prisma = await getPrisma();
+    const { page = 1, limit = 10, search, productId, nearExpiry, expired, branchId: queryBranchId } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    let branchId: string | undefined = req.user?.selectedBranchId || req.user?.branchId;
+    // Priority: query param > header > user's assigned branch
+    let branchId: string | undefined = queryBranchId as string || req.user?.selectedBranchId || req.user?.branchId;
     let companyId: string | undefined = req.user?.selectedCompanyId || req.user?.companyId;
+
+    console.log('🔍 getInventoryByBatches - Initial context:', {
+      queryBranchId,
+      branchId,
+      companyId,
+      userId: req.user?.id,
+      role: req.user?.role,
+      createdBy: req.user?.createdBy
+    });
 
     // If user doesn't have branch/company context, get it from their admin
     if (!branchId || !companyId) {
@@ -171,10 +182,37 @@ export const getInventoryByBatches = async (req: AuthRequest, res: Response) => 
       }
     }
 
+    // If we have branchId but no companyId, get companyId from the branch
+    if (branchId && !companyId) {
+      const branch = await prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { companyId: true }
+      });
+      if (branch?.companyId) {
+        companyId = branch.companyId;
+        console.log('🔍 Got companyId from branch:', companyId);
+      }
+    }
+
+    // For ADMIN and SUPERADMIN, if still no branch, try to get from the product if productId is provided
+    if (!branchId && productId && (req.user?.role === 'ADMIN' || req.user?.role === 'SUPERADMIN')) {
+      const product = await prisma.product.findUnique({
+        where: { id: productId as string },
+        select: { branchId: true, companyId: true }
+      });
+      if (product) {
+        branchId = product.branchId;
+        companyId = product.companyId;
+        console.log('🔍 Got context from product:', { branchId, companyId });
+      }
+    }
+
+    console.log('🔍 getInventoryByBatches - Final context:', { branchId, companyId });
+
     if (!branchId || !companyId) {
       return res.status(400).json({
         success: false,
-        message: 'Branch and company context required. Please ensure you have proper access permissions.',
+        message: 'Branch and company context required. Please select a branch from the dropdown or ensure you have proper access permissions.',
       });
     }
 
@@ -189,9 +227,10 @@ export const getInventoryByBatches = async (req: AuthRequest, res: Response) => 
 
     if (search) {
       where.OR = [
-        { batchNo: { contains: search as string, mode: 'insensitive' } },
-        { product: { name: { contains: search as string, mode: 'insensitive' } } },
-        { product: { sku: { contains: search as string, mode: 'insensitive' } } },
+        { batchNo: { contains: search as string } },
+        { product: { name: { contains: search as string } } },
+        { product: { sku: { contains: search as string } } },
+        { product: { formula: { contains: search as string } } } // Search by product formula
       ];
     }
 
@@ -290,6 +329,7 @@ export const getInventoryByBatches = async (req: AuthRequest, res: Response) => 
 // Get inventory reports
 export const getInventoryReports = async (req: AuthRequest, res: Response) => {
   try {
+    const prisma = await getPrisma();
     let branchId: string | undefined = req.user?.selectedBranchId || req.user?.branchId;
     let companyId: string | undefined = req.user?.selectedCompanyId || req.user?.companyId;
 

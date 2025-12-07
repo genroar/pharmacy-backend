@@ -1,11 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSalesReport = exports.getCustomers = exports.createSale = exports.getSales = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
-const prisma = new client_1.PrismaClient();
 const getSales = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, startDate = '', endDate = '', branchId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -67,6 +67,7 @@ const getSales = async (req, res) => {
 exports.getSales = getSales;
 const createSale = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const saleData = req.body;
         const sale = await prisma.sale.create({
             data: {
@@ -101,15 +102,16 @@ const createSale = async (req, res) => {
 exports.createSale = createSale;
 const getCustomers = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', branchId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
         if (search) {
             where.OR = [
-                { name: { contains: search, mode: 'insensitive' } },
-                { phone: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } }
+                { name: { contains: search } },
+                { phone: { contains: search } },
+                { email: { contains: search } }
             ];
         }
         if (branchId) {
@@ -151,6 +153,7 @@ const getCustomers = async (req, res) => {
 exports.getCustomers = getCustomers;
 const getSalesReport = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { startDate, endDate, branchId } = req.query;
         const where = (0, auth_middleware_1.buildBranchWhereClause)(req, {});
         if (startDate || endDate) {

@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import { ROLE_PERMISSIONS, getRolePermissions as getRolePermissionsConfig, getAccessibleResources as getAccessibleResourcesConfig, getAllowedActions as getAllowedActionsConfig, hasPermission } from '../config/permissions';
 import { AuthRequest } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
 
 // Get all available roles and their permissions
 export const getRoles = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -223,6 +221,7 @@ export const updateUserRole = async (req: AuthRequest, res: Response): Promise<v
     }
 
     // Update user role
+    const prisma = await getPrisma();
     const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: { role },

@@ -4,9 +4,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEmployeePerformance = exports.getCommissionStats = exports.updateCommission = exports.getCommission = exports.getCommissions = exports.calculateCommission = void 0;
-const client_1 = require("@prisma/client");
+const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
-const prisma = new client_1.PrismaClient();
 const calculateCommissionSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
     branchId: joi_1.default.string().required(),
@@ -22,6 +21,7 @@ const updateCommissionSchema = joi_1.default.object({
 });
 const calculateCommission = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { error } = calculateCommissionSchema.validate(req.body);
         if (error) {
             return res.status(400).json({
@@ -168,6 +168,7 @@ const calculateCommission = async (req, res) => {
 exports.calculateCommission = calculateCommission;
 const getCommissions = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, employeeId = '', branchId = '', status = '', periodType = '', startDate = '', endDate = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
@@ -244,6 +245,7 @@ const getCommissions = async (req, res) => {
 exports.getCommissions = getCommissions;
 const getCommission = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const commission = await prisma.commission.findUnique({
             where: { id },
@@ -286,6 +288,7 @@ const getCommission = async (req, res) => {
 exports.getCommission = getCommission;
 const updateCommission = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { id } = req.params;
         const { error } = updateCommissionSchema.validate(req.body);
         if (error) {
@@ -345,6 +348,7 @@ const updateCommission = async (req, res) => {
 exports.updateCommission = updateCommission;
 const getCommissionStats = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { branchId, startDate, endDate } = req.query;
         const where = {};
         if (branchId) {
@@ -400,6 +404,7 @@ const getCommissionStats = async (req, res) => {
 exports.getCommissionStats = getCommissionStats;
 const getEmployeePerformance = async (req, res) => {
     try {
+        const prisma = await (0, db_util_1.getPrisma)();
         const { employeeId } = req.params;
         const { startDate, endDate } = req.query;
         const where = { employeeId };

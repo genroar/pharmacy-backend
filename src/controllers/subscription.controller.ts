@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
-
-const prisma = new PrismaClient();
 
 // Validation schemas
 const updateSubscriptionSchema = Joi.object({
@@ -22,7 +20,8 @@ const addPaymentMethodSchema = Joi.object({
 
 // Get subscription details
 export const getSubscription = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const userId = (req as any).user?.id;
 
     if (!userId) {
@@ -89,7 +88,8 @@ export const getSubscription = async (req: Request, res: Response): Promise<void
 
 // Update subscription
 export const updateSubscription = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const { error } = updateSubscriptionSchema.validate(req.body);
     if (error) {
       res.status(400).json({
@@ -126,7 +126,8 @@ export const updateSubscription = async (req: Request, res: Response): Promise<v
 
 // Add payment method
 export const addPaymentMethod = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const { error } = addPaymentMethodSchema.validate(req.body);
     if (error) {
       res.status(400).json({
@@ -163,7 +164,8 @@ export const addPaymentMethod = async (req: Request, res: Response): Promise<voi
 
 // Set default payment method
 export const setDefaultPaymentMethod = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const { methodId } = req.params;
     const userId = (req as any).user?.id;
 
@@ -191,7 +193,8 @@ export const setDefaultPaymentMethod = async (req: Request, res: Response): Prom
 
 // Delete payment method
 export const deletePaymentMethod = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const { methodId } = req.params;
     const userId = (req as any).user?.id;
 
@@ -219,7 +222,8 @@ export const deletePaymentMethod = async (req: Request, res: Response): Promise<
 
 // Get billing history
 export const getBillingHistory = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const userId = (req as any).user?.id;
 
     if (!userId) {
@@ -276,7 +280,8 @@ export const getBillingHistory = async (req: Request, res: Response): Promise<vo
 
 // Process payment
 export const processPayment = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const userId = (req as any).user?.id;
     const { method, phoneNumber, amount, transactionId } = req.body;
 
@@ -345,7 +350,8 @@ export const processPayment = async (req: Request, res: Response): Promise<void>
 
 // Get payment methods for EasyPaisa and JazzCash
 export const getPaymentMethods = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const userId = (req as any).user?.id;
 
     if (!userId) {
@@ -417,7 +423,8 @@ export const getPaymentMethods = async (req: Request, res: Response): Promise<vo
 
 // Download invoice
 export const downloadInvoice = async (req: Request, res: Response): Promise<void> => {
-  try {
+      const prisma = await getPrisma();
+try {
     const { invoiceId } = req.params;
     const userId = (req as any).user?.id;
 
