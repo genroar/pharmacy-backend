@@ -184,8 +184,8 @@ export const getLowStockBatches = async (req: any, res: Response) => {
 
     // Build the where clause - branchId is optional for ADMIN/SUPERADMIN
     const productWhere: any = {
-      companyId: targetCompanyId,
-      isActive: true
+        companyId: targetCompanyId,
+        isActive: true
     };
 
     if (targetBranchId) {
@@ -194,9 +194,9 @@ export const getLowStockBatches = async (req: any, res: Response) => {
 
     // Build batches where clause - branchId is optional for ADMIN/SUPERADMIN
     const batchesWhere: any = {
-      companyId: targetCompanyId,
-      isActive: true,
-      quantity: { gt: 0 }
+            companyId: targetCompanyId,
+            isActive: true,
+            quantity: { gt: 0 }
     };
 
     if (targetBranchId) {
