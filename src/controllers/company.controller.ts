@@ -21,17 +21,13 @@ const updateCompanySchema = Joi.object({
 });
 
 // Get all companies for the authenticated user
+// NOTE: Removed SUPERADMIN check - all users can see all active companies
 export const getCompanies = async (req: Request, res: Response): Promise<void> => {
   try {
     const prisma = await getPrisma();
-    const userId = (req as any).user.id;
-    const userRole = (req as any).user.role;
 
-    let companies;
-
-    if (userRole === 'SUPERADMIN') {
-      // SuperAdmin can see all companies
-      companies = await prisma.company.findMany({
+    // All users can see all active companies
+    const companies = await prisma.company.findMany({
         where: { isActive: true },
         include: {
           branches: {
@@ -52,33 +48,6 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
         },
         orderBy: { createdAt: 'desc' }
       });
-    } else {
-      // Regular admin can only see their own companies
-      companies = await prisma.company.findMany({
-        where: {
-          createdBy: userId,
-          isActive: true
-        },
-        include: {
-          branches: {
-            where: { isActive: true },
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-            }
-          },
-          _count: {
-            select: {
-              users: true,
-              employees: true,
-              products: true
-            }
-          }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-    }
 
     res.json({
       success: true,
@@ -94,12 +63,11 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
 };
 
 // Get a single company by ID
+// NOTE: Removed access check - all users can view any company
 export const getCompany = async (req: Request, res: Response): Promise<void> => {
   try {
     const prisma = await getPrisma();
     const { id } = req.params;
-    const userId = (req as any).user.id;
-    const userRole = (req as any).user.role;
 
     const company = await prisma.company.findUnique({
       where: { id },
@@ -130,15 +98,6 @@ export const getCompany = async (req: Request, res: Response): Promise<void> => 
       res.status(404).json({
         success: false,
         message: 'Company not found'
-      });
-      return;
-    }
-
-    // Check if user has access to this company
-    if (userRole !== 'SUPERADMIN' && company.createdBy !== userId) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
       });
       return;
     }
@@ -249,8 +208,6 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
     }
 
     const { id } = req.params;
-    const userId = (req as any).user.id;
-    const userRole = (req as any).user.role;
     const { name, description, address, phone, email, businessType } = req.body;
 
     // Check if company exists
@@ -266,14 +223,7 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Check if user has access to this company
-    if (userRole !== 'SUPERADMIN' && existingCompany.createdBy !== userId) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-      return;
-    }
+    // NOTE: Removed access check - any user can update any company
 
     // Check if new name conflicts with existing company
     if (name && name !== existingCompany.name) {
@@ -329,12 +279,11 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
 };
 
 // Delete a company (soft delete)
+// NOTE: Removed access check - any user can delete any company
 export const deleteCompany = async (req: Request, res: Response): Promise<void> => {
   try {
     const prisma = await getPrisma();
     const { id } = req.params;
-    const userId = (req as any).user.id;
-    const userRole = (req as any).user.role;
 
     // Check if company exists
     const existingCompany = await prisma.company.findUnique({
@@ -355,15 +304,6 @@ export const deleteCompany = async (req: Request, res: Response): Promise<void> 
       res.status(404).json({
         success: false,
         message: 'Company not found'
-      });
-      return;
-    }
-
-    // Check if user has access to this company
-    if (userRole !== 'SUPERADMIN' && existingCompany.createdBy !== userId) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
       });
       return;
     }
@@ -432,14 +372,7 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
       return;
     }
 
-    // Check if user has access to this company
-    if (userRole !== 'SUPERADMIN' && existingCompany.createdBy !== userId) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-      return;
-    }
+    // NOTE: Removed access check - any user can update business type
 
     const company = await prisma.company.update({
       where: { id },
@@ -473,14 +406,13 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
 };
 
 // Get company statistics
+// NOTE: Removed access check - any user can view company stats
 export const getCompanyStats = async (req: Request, res: Response): Promise<void> => {
   try {
     const prisma = await getPrisma();
     const { id } = req.params;
-    const userId = (req as any).user.id;
-    const userRole = (req as any).user.role;
 
-    // Check if company exists and user has access
+    // Check if company exists
     const company = await prisma.company.findUnique({
       where: { id }
     });
@@ -489,14 +421,6 @@ export const getCompanyStats = async (req: Request, res: Response): Promise<void
       res.status(404).json({
         success: false,
         message: 'Company not found'
-      });
-      return;
-    }
-
-    if (userRole !== 'SUPERADMIN' && company.createdBy !== userId) {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
       });
       return;
     }

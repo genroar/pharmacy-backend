@@ -40,6 +40,8 @@ class DatabaseService {
   private postgresConfig: DatabaseConfig;
   private syncInProgress: boolean = false;
   private syncQueue: any[] = [];
+  private lastLoggedStatus: ConnectionStatus | null = null; // Track last logged status
+  private verboseLogging: boolean = true; // First check is always verbose
 
   constructor() {
     // SQLite + PostgreSQL Sync Strategy:
@@ -721,6 +723,9 @@ class DatabaseService {
   async checkConnectivity(): Promise<ConnectionStatus> {
     this.connectionStatus = ConnectionStatus.CHECKING;
 
+    // Only log verbose on first check or status change
+    const shouldLog = this.verboseLogging;
+
     try {
       // Strategy: SQLite for offline, PostgreSQL for online sync
       // Always initialize SQLite first (works offline, zero setup)
@@ -728,7 +733,7 @@ class DatabaseService {
       try {
         await this.initializeSQLite();
         sqliteReady = true;
-        console.log('[Database] ✅ SQLite ready (offline database)');
+        if (shouldLog) console.log('[Database] ✅ SQLite ready (offline database)');
       } catch (sqliteError: any) {
         console.warn('[Database] ⚠️  SQLite initialization failed:', sqliteError.message);
         // Continue - we'll try PostgreSQL
@@ -740,16 +745,18 @@ class DatabaseService {
 
       if (this.postgresConfig.url && this.postgresConfig.url.startsWith('postgresql://')) {
         const isRemote = this.isRemotePostgreSQL(this.postgresConfig.url);
-        console.log(`[Database] 🔍 Checking PostgreSQL connectivity (${isRemote ? 'remote' : 'local'})...`);
-        console.log(`[Database] 🔍 PostgreSQL URL configured: ${this.postgresConfig.url.replace(/:[^:@]+@/, ':****@')}`);
+        if (shouldLog) {
+          console.log(`[Database] 🔍 Checking PostgreSQL connectivity (${isRemote ? 'remote' : 'local'})...`);
+          console.log(`[Database] 🔍 PostgreSQL URL configured: ${this.postgresConfig.url.replace(/:[^:@]+@/, ':****@')}`);
+        }
         isPostgreSQLAvailable = await this.checkPostgreSQLConnection();
-        console.log(`[Database] 🔍 PostgreSQL connection result: ${isPostgreSQLAvailable ? '✅ Available' : '❌ Unavailable'}`);
+        if (shouldLog) console.log(`[Database] 🔍 PostgreSQL connection result: ${isPostgreSQLAvailable ? '✅ Available' : '❌ Unavailable'}`);
       } else {
         // No PostgreSQL URL configured - try common default URLs automatically
-        console.log('[Database] ℹ️  No PostgreSQL URL configured - trying common default URLs...');
+        if (shouldLog) console.log('[Database] ℹ️  No PostgreSQL URL configured - trying common default URLs...');
         isPostgreSQLAvailable = await this.tryCommonPostgreSQLUrls();
 
-        if (!isPostgreSQLAvailable) {
+        if (!isPostgreSQLAvailable && shouldLog) {
           console.log('[Database] ℹ️  No PostgreSQL connection available - using offline mode (SQLite only)');
           console.log('[Database] 💡 To set a specific PostgreSQL URL, add to .env:');
           console.log('[Database]    REMOTE_DATABASE_URL="postgresql://user:pass@host:port/db"');
@@ -763,11 +770,13 @@ class DatabaseService {
         const isRemote = this.isRemotePostgreSQL(this.postgresConfig.url);
         if (!isRemote) {
           // PostgreSQL is localhost - check internet connectivity
-          console.log('[Database] 🔍 PostgreSQL is localhost - checking internet connectivity...');
+          if (shouldLog) console.log('[Database] 🔍 PostgreSQL is localhost - checking internet connectivity...');
           internetAvailable = await this.checkInternetConnectivity();
           if (!internetAvailable) {
-            console.log('[Database] ⚠️  Internet not available - treating as offline mode');
-            console.log('[Database] 💡 Localhost PostgreSQL available but no internet - using offline mode');
+            if (shouldLog) {
+              console.log('[Database] ⚠️  Internet not available - treating as offline mode');
+              console.log('[Database] 💡 Localhost PostgreSQL available but no internet - using offline mode');
+            }
             isPostgreSQLAvailable = false; // Treat as offline if no internet
           }
         }
@@ -780,7 +789,7 @@ class DatabaseService {
 
         // Before switching to online mode, sync SQLite → PostgreSQL (if we were using SQLite)
         if (this.currentType === DatabaseType.SQLITE && this.sqliteClient) {
-          console.log('[Database] 🔄 PostgreSQL available, syncing SQLite → PostgreSQL...');
+          if (shouldLog) console.log('[Database] 🔄 PostgreSQL available, syncing SQLite → PostgreSQL...');
           // Trigger automatic sync (will be handled by sync service in server.ts)
           // This ensures all offline data is synced to PostgreSQL when going online
           const { getSyncService } = require('./sync.service');
@@ -798,16 +807,18 @@ class DatabaseService {
         this.currentType = DatabaseType.SQLITE; // Keep SQLite for Prisma
         this.currentClient = this.sqliteClient; // Keep SQLite client for Prisma
 
-        const isRemote = this.isRemotePostgreSQL(this.postgresConfig.url);
-        console.log(`[Database] 🌐 Online mode - PostgreSQL available (${isRemote ? 'remote' : 'local'})`);
-        console.log(`[Database] 💡 Prisma operations use SQLite (schema is SQLite)`);
-        console.log(`[Database] 💡 PostgreSQL used for sync operations via direct connection`);
+        if (shouldLog) {
+          const isRemote = this.isRemotePostgreSQL(this.postgresConfig.url);
+          console.log(`[Database] 🌐 Online mode - PostgreSQL available (${isRemote ? 'remote' : 'local'})`);
+          console.log(`[Database] 💡 Prisma operations use SQLite (schema is SQLite)`);
+          console.log(`[Database] 💡 PostgreSQL used for sync operations via direct connection`);
+        }
       } else {
         // PostgreSQL not available - we're going offline
         // Before switching to SQLite, sync PostgreSQL → SQLite (if we were using PostgreSQL)
         // This ensures SQLite has the latest data
         if (this.currentType === DatabaseType.POSTGRESQL && this.postgresClient && sqliteReady) {
-          console.log('[Database] 🔄 Going offline, syncing PostgreSQL → SQLite to keep data up-to-date...');
+          if (shouldLog) console.log('[Database] 🔄 Going offline, syncing PostgreSQL → SQLite to keep data up-to-date...');
           // Trigger automatic sync (will be handled by sync service in server.ts)
           // This ensures all online data is synced to SQLite when going offline
           const { getSyncService } = require('./sync.service');
@@ -822,7 +833,7 @@ class DatabaseService {
           this.connectionStatus = ConnectionStatus.OFFLINE;
           this.currentType = DatabaseType.SQLITE;
           this.currentClient = this.sqliteClient;
-          console.log('[Database] 📴 Offline mode - Using SQLite (PostgreSQL unavailable)');
+          if (shouldLog) console.log('[Database] 📴 Offline mode - Using SQLite (PostgreSQL unavailable)');
         } else {
           // Neither database available
           this.connectionStatus = ConnectionStatus.ERROR;
@@ -848,6 +859,14 @@ class DatabaseService {
         this.currentType = DatabaseType.POSTGRESQL;
         this.currentClient = this.postgresClient;
       }
+    }
+
+    // After first check, only log on status change
+    if (this.lastLoggedStatus !== this.connectionStatus) {
+      this.lastLoggedStatus = this.connectionStatus;
+      this.verboseLogging = true; // Enable logging for next status change
+    } else {
+      this.verboseLogging = false; // Disable verbose logging if status unchanged
     }
 
     return this.connectionStatus;

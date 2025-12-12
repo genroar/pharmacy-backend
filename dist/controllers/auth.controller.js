@@ -72,7 +72,8 @@ const login = async (req, res) => {
             });
             return;
         }
-        if (!user.isActive) {
+        const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+        if (!user.isActive && !isOfflineMode) {
             console.log('❌ User account is disabled:', usernameOrEmail);
             res.status(403).json({
                 success: false,
@@ -80,6 +81,15 @@ const login = async (req, res) => {
                 accountDisabled: true
             });
             return;
+        }
+        if (!user.isActive && isOfflineMode) {
+            console.log('🔓 Offline mode: Auto-activating user account:', usernameOrEmail);
+            const prisma = await (0, db_util_1.getPrisma)();
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { isActive: true }
+            });
+            user.isActive = true;
         }
         const isPasswordValid = await bcryptjs_1.default.compare(password, user.password);
         console.log('🔐 Password check - Valid:', isPasswordValid);
@@ -175,6 +185,8 @@ const register = async (req, res) => {
         }
         let user;
         const hashedPassword = await bcryptjs_1.default.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+        const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+        const shouldBeActive = isOfflineMode;
         if (role === 'ADMIN' || role === 'SUPERADMIN') {
             user = await prisma.user.create({
                 data: {
@@ -185,7 +197,7 @@ const register = async (req, res) => {
                     role,
                     branchId: null,
                     companyId: null,
-                    isActive: false,
+                    isActive: shouldBeActive,
                     createdBy: null
                 }
             });
@@ -221,7 +233,7 @@ const register = async (req, res) => {
                     role,
                     branchId: processedBranchId,
                     companyId: branch.companyId,
-                    isActive: false,
+                    isActive: shouldBeActive,
                     createdBy: null
                 },
                 include: {
@@ -230,22 +242,56 @@ const register = async (req, res) => {
                 }
             });
         }
-        console.log('✅ Account created (pending activation):', username);
-        res.status(201).json({
-            success: true,
-            pendingActivation: true,
-            message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
-            data: {
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    name: user.name,
-                    role: user.role,
-                    isActive: user.isActive,
-                    email: user.email
+        if (shouldBeActive) {
+            console.log('✅ Account created and activated (offline mode):', username);
+            const sessionToken = crypto_1.default.randomBytes(32).toString('hex');
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { sessionToken, lastLoginAt: new Date() }
+            });
+            const token = jsonwebtoken_1.default.sign({
+                userId: user.id,
+                username: user.username,
+                role: user.role,
+                branchId: user.branchId,
+                createdBy: user.createdBy,
+                sessionToken
+            }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+            res.status(201).json({
+                success: true,
+                pendingActivation: false,
+                message: 'Account created successfully! You can now login.',
+                data: {
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        name: user.name,
+                        role: user.role,
+                        isActive: true,
+                        email: user.email
+                    },
+                    token
                 }
-            }
-        });
+            });
+        }
+        else {
+            console.log('✅ Account created (pending activation):', username);
+            res.status(201).json({
+                success: true,
+                pendingActivation: true,
+                message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
+                data: {
+                    user: {
+                        id: user.id,
+                        username: user.username,
+                        name: user.name,
+                        role: user.role,
+                        isActive: user.isActive,
+                        email: user.email
+                    }
+                }
+            });
+        }
     }
     catch (error) {
         console.error('Register error:', error);

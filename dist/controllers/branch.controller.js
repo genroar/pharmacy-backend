@@ -36,20 +36,6 @@ const getBranches = async (req, res) => {
             where.companyId = req.user.selectedCompanyId;
             console.log('🏢 Filtering branches by selected company:', req.user.selectedCompanyId);
         }
-        if (req.user?.role === 'SUPERADMIN') {
-        }
-        else if (req.user?.role === 'ADMIN') {
-            where.createdBy = req.user.id;
-        }
-        else if (req.user?.createdBy) {
-            where.createdBy = req.user.createdBy;
-        }
-        else if (req.user?.id) {
-            where.createdBy = req.user.id;
-        }
-        else {
-            where.createdBy = 'non-existent-admin-id';
-        }
         if (search) {
             where.OR = [
                 { name: { contains: search } },
@@ -175,12 +161,6 @@ const createBranch = async (req, res) => {
             return res.status(404).json({
                 success: false,
                 message: 'Company not found'
-            });
-        }
-        if (req.user?.role !== 'SUPERADMIN' && company.createdBy !== req.user?.id) {
-            return res.status(403).json({
-                success: false,
-                message: 'Access denied to this company'
             });
         }
         const existingBranch = await prisma.branch.findFirst({

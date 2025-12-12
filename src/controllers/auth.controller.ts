@@ -88,7 +88,11 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Check if user account is active
-    if (!user.isActive) {
+    // In offline/SQLite mode, allow login even if account is not "officially" activated
+    // This is for local installations where there's no SuperAdmin to activate accounts
+    const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+
+    if (!user.isActive && !isOfflineMode) {
       console.log('❌ User account is disabled:', usernameOrEmail);
       res.status(403).json({
         success: false,
@@ -96,6 +100,17 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         accountDisabled: true
       });
       return;
+    }
+
+    // In offline mode, auto-activate the user on first login
+    if (!user.isActive && isOfflineMode) {
+      console.log('🔓 Offline mode: Auto-activating user account:', usernameOrEmail);
+      const prisma = await getPrisma();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { isActive: true }
+      });
+      user.isActive = true;
     }
 
     // Check password
@@ -220,9 +235,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
+    // Check if we're in offline/SQLite mode
+    // In offline mode, users are created as ACTIVE (no SuperAdmin needed)
+    const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+    const shouldBeActive = isOfflineMode; // Auto-activate in offline mode
+
     // For ADMIN and SUPERADMIN users, create user without branch/company initially
     // They will create companies and branches from the dashboard
-    // NEW: All new accounts are INACTIVE until SuperAdmin activates them
+    // In offline mode: Account is ACTIVE immediately
+    // In online mode: Account needs activation by SuperAdmin
     if (role === 'ADMIN' || role === 'SUPERADMIN') {
       user = await prisma.user.create({
         data: {
@@ -233,7 +254,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: null, // No branch initially
           companyId: null, // No company initially
-          isActive: false, // NEW: Account needs activation by SuperAdmin
+          isActive: shouldBeActive, // Active in offline mode, inactive in online mode
           createdBy: null // Will be updated to self-reference after user creation
         }
       });
@@ -267,7 +288,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       }
 
       // Create user with branch assignment
-      // NEW: All new accounts are INACTIVE until SuperAdmin activates them
+      // In offline mode: Account is ACTIVE immediately
+      // In online mode: Account needs activation by SuperAdmin
       user = await prisma.user.create({
         data: {
           username,
@@ -277,7 +299,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: processedBranchId,
           companyId: branch.companyId,
-          isActive: false, // NEW: Account needs activation by SuperAdmin
+          isActive: shouldBeActive, // Active in offline mode, inactive in online mode
           createdBy: null // Will be set by the admin who creates this user
         },
         include: {
@@ -287,26 +309,71 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       });
     }
 
-    // NEW: Return success but with pending activation message
-    // Do NOT generate JWT token - user cannot login until activated
-    console.log('✅ Account created (pending activation):', username);
+    // Handle response based on mode
+    if (shouldBeActive) {
+      // OFFLINE MODE: User is active, generate token for immediate login
+      console.log('✅ Account created and activated (offline mode):', username);
 
-    res.status(201).json({
-      success: true,
-      pendingActivation: true, // Flag for frontend to show special message
-      message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
-      data: {
-        user: {
-          id: user.id,
+      // Generate session token for immediate login
+      const sessionToken = crypto.randomBytes(32).toString('hex');
+
+      // Update user with session token
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { sessionToken, lastLoginAt: new Date() }
+      });
+
+      // Generate JWT token
+      const token = (jwt.sign as any)(
+        {
+          userId: user.id,
           username: user.username,
-          name: user.name,
           role: user.role,
-          isActive: user.isActive, // Will be false
-          email: user.email
+          branchId: user.branchId,
+          createdBy: user.createdBy,
+          sessionToken
+        },
+        process.env.JWT_SECRET!,
+        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+      );
+
+      res.status(201).json({
+        success: true,
+        pendingActivation: false,
+        message: 'Account created successfully! You can now login.',
+        data: {
+          user: {
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+            isActive: true,
+            email: user.email
+          },
+          token // Include token for immediate login in offline mode
         }
-        // NO token - user cannot login until activated
-      }
-    });
+      });
+    } else {
+      // ONLINE MODE: User needs activation, no token
+      console.log('✅ Account created (pending activation):', username);
+
+      res.status(201).json({
+        success: true,
+        pendingActivation: true, // Flag for frontend to show special message
+        message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
+        data: {
+          user: {
+            id: user.id,
+            username: user.username,
+            name: user.name,
+            role: user.role,
+            isActive: user.isActive, // Will be false
+            email: user.email
+          }
+          // NO token - user cannot login until activated
+        }
+      });
+    }
   } catch (error) {
     console.error('Register error:', error);
     console.error('Error details:', {

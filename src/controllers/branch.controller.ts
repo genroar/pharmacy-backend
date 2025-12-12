@@ -23,6 +23,7 @@ const updateBranchSchema = Joi.object({
   isActive: Joi.boolean()
 });
 
+// NOTE: Removed role-based filtering - all users can see all active branches
 export const getBranches = async (req: AuthRequest, res: Response) => {
   try {
     const prisma = await getPrisma();
@@ -41,22 +42,7 @@ export const getBranches = async (req: AuthRequest, res: Response) => {
       console.log('🏢 Filtering branches by selected company:', req.user.selectedCompanyId);
     }
 
-    // Data isolation based on user role
-    if (req.user?.role === 'SUPERADMIN') {
-      // SUPERADMIN can see all branches (but still filtered by company if selected)
-    } else if (req.user?.role === 'ADMIN') {
-      // For ADMIN users, use their own ID as createdBy (self-referencing)
-      where.createdBy = req.user.id;
-    } else if (req.user?.createdBy) {
-      // Other users see branches from their admin
-      where.createdBy = req.user.createdBy;
-    } else if (req.user?.id) {
-      // Fallback to user ID if no createdBy
-      where.createdBy = req.user.id;
-    } else {
-      // No access if no user context
-      where.createdBy = 'non-existent-admin-id';
-    }
+    // No role-based filtering - all users can see all branches
 
     if (search) {
       where.OR = [
@@ -181,7 +167,7 @@ export const createBranch = async (req: AuthRequest, res: Response) => {
 
     const { name, address, phone, email, companyId, managerId } = req.body;
 
-    // Verify that the company exists and user has access to it
+    // Verify that the company exists
     const company = await prisma.company.findUnique({
       where: { id: companyId }
     });
@@ -193,13 +179,7 @@ export const createBranch = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Check if user has access to this company
-    if (req.user?.role !== 'SUPERADMIN' && company.createdBy !== req.user?.id) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied to this company'
-      });
-    }
+    // NOTE: Removed access check - any user can create branch in any company
 
     // Check if branch name already exists for this company
     const existingBranch = await prisma.branch.findFirst({

@@ -39,6 +39,9 @@ class SyncService {
     currentOperation: null
   };
   private queueFilePath: string;
+  private postgresTablesExist: boolean = false; // Track if tables exist
+  private tablesCheckDone: boolean = false; // Only log missing tables once
+  private lastTableCheckTime: Date | null = null; // Rate limit table checks
 
   constructor() {
     const queueDir = path.join(os.homedir(), '.zapeera', 'sync');
@@ -337,9 +340,8 @@ class SyncService {
         const result = await client.query(`SELECT * FROM "${tableName}"`);
         return result.rows;
       } catch (error: any) {
-        // If table doesn't exist, return empty array
+        // If table doesn't exist, return empty array (don't log repeatedly)
         if (error.message && error.message.includes('does not exist')) {
-          console.warn(`[Sync] Table ${tableName} does not exist in PostgreSQL, skipping`);
           return [];
         }
         throw error;
@@ -731,7 +733,7 @@ class SyncService {
   private async syncAllTables(
     sourceClient: PrismaClient,
     targetClient: any
-  ): Promise<void> {
+  ): Promise<number> {
     // List of all tables to sync (using Prisma model names)
     // Order matters: sync parent tables before child tables (foreign keys)
     const modelNames = [
@@ -778,10 +780,21 @@ class SyncService {
     let totalFailed = 0;
     const failedRecords: Array<{ modelName: string; postgresTableName: string; record: any; error: string }> = [];
 
+    // Rate limit: Only do full table check every 5 minutes
+    const now = new Date();
+    const fiveMinutes = 5 * 60 * 1000;
+    if (this.lastTableCheckTime && (now.getTime() - this.lastTableCheckTime.getTime()) < fiveMinutes && !this.postgresTablesExist) {
+      // Skip sync if we recently checked and tables don't exist
+      return totalSynced;
+    }
+    this.lastTableCheckTime = now;
+
     console.log(`[Sync] Starting full database sync (${modelNames.length} tables)...`);
 
     // For PostgreSQL: Disable FK checks during sync to allow inserting children before parents
     let transactionActive = false;
+    let missingTablesCount = 0;
+
     if (!this.isPrismaClient(targetClient)) {
       try {
         // Rollback any existing failed transaction first (safe to call even if not in transaction)
@@ -818,8 +831,11 @@ class SyncService {
         if (!this.isPrismaClient(targetClient)) {
           const tableExists = await this.tableExistsInPostgreSQL(targetClient, postgresTableName);
           if (!tableExists) {
-            console.warn(`[Sync] ⚠️  Table ${postgresTableName} does not exist in PostgreSQL, skipping.`);
-            console.warn(`[Sync] 💡 Run: npm run db:reset-postgresql (to reset and rebuild) or create tables manually.`);
+            missingTablesCount++;
+            // Only log individual missing tables on first check
+            if (!this.tablesCheckDone) {
+              console.warn(`[Sync] ⚠️  Table ${postgresTableName} does not exist in PostgreSQL, skipping.`);
+            }
             continue;
           }
         }
@@ -1160,7 +1176,20 @@ class SyncService {
       }
     }
 
+    // Update table check status
+    if (missingTablesCount > 0) {
+      if (!this.tablesCheckDone) {
+        console.warn(`[Sync] ⚠️  ${missingTablesCount} tables missing in PostgreSQL. Run: npm run db:reset-postgresql`);
+        console.warn(`[Sync] 💤 Sync to PostgreSQL paused until tables are created. Will retry in 5 minutes.`);
+      }
+      this.postgresTablesExist = false;
+    } else {
+      this.postgresTablesExist = true;
+    }
+    this.tablesCheckDone = true;
+
     console.log(`[Sync] ✅ Full database sync completed: ${totalSynced} records synced${totalFailed > 0 ? `, ${totalFailed} failed` : ''}`);
+    return totalSynced;
   }
 
   /**

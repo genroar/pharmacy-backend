@@ -118,13 +118,14 @@ try {
       console.log(`[Database] Initial connectivity: ${status}`);
       console.log(`[Database] Current database type: ${dbService.getCurrentType()}`);
 
-      // Start periodic connectivity monitoring
-      dbService.startConnectivityMonitoring(30000); // Check every 30 seconds
+      // Start periodic connectivity monitoring (every 2 minutes to reduce logs)
+      dbService.startConnectivityMonitoring(120000); // Check every 2 minutes
 
       // Auto-sync when going online (SQLite → PostgreSQL)
       let previousStatus = String(status);
       let previousType = dbService.getCurrentType();
 
+      // Check for status changes every 2 minutes (reduced from 30 seconds)
       setInterval(async () => {
         if (!dbService || !syncService) {
           return;
@@ -190,7 +191,7 @@ try {
 
         previousStatus = currentStatus;
         previousType = currentType;
-      }, 30000);
+      }, 120000); // Check every 2 minutes (reduced from 30 seconds)
     }).catch(err => {
       console.error('[Database] Failed to initialize database service:', err);
     });

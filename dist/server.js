@@ -123,7 +123,7 @@ try {
             }
             console.log(`[Database] Initial connectivity: ${status}`);
             console.log(`[Database] Current database type: ${dbService.getCurrentType()}`);
-            dbService.startConnectivityMonitoring(30000);
+            dbService.startConnectivityMonitoring(120000);
             let previousStatus = String(status);
             let previousType = dbService.getCurrentType();
             setInterval(async () => {
@@ -172,7 +172,7 @@ try {
                 }
                 previousStatus = currentStatus;
                 previousType = currentType;
-            }, 30000);
+            }, 120000);
         }).catch(err => {
             console.error('[Database] Failed to initialize database service:', err);
         });

@@ -33,7 +33,8 @@ const authenticate = async (req, res, next) => {
                 code: 'USER_NOT_FOUND'
             });
         }
-        if (!user.isActive) {
+        const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+        if (!user.isActive && !isOfflineMode) {
             return res.status(401).json({
                 message: 'Your account has been deactivated. Please contact your administrator.',
                 code: 'ACCOUNT_DEACTIVATED'

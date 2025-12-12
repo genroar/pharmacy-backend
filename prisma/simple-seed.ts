@@ -24,7 +24,7 @@ async function main() {
   // Create users with the branch
   const superadmin = await prisma.user.upsert({
     where: { username: 'superadmin' },
-    update: {},
+    update: { isActive: true },
     create: {
       username: 'superadmin',
       email: 'superadmin@medibillpulse.com',
@@ -32,13 +32,14 @@ async function main() {
       name: 'Super Admin',
       role: 'SUPERADMIN',
       branchId: branch.id,
-      createdBy: null
+      createdBy: null,
+      isActive: true // Ensure user is active
     }
   });
 
   const admin = await prisma.user.upsert({
     where: { username: 'admin' },
-    update: {},
+    update: { isActive: true },
     create: {
       username: 'admin',
       email: 'admin@medibillpulse.com',
@@ -46,13 +47,14 @@ async function main() {
       name: 'Admin User',
       role: 'ADMIN',
       branchId: branch.id,
-      createdBy: superadmin.id
+      createdBy: superadmin.id,
+      isActive: true // Ensure user is active
     }
   });
 
   const manager = await prisma.user.upsert({
     where: { username: 'manager' },
-    update: {},
+    update: { isActive: true },
     create: {
       username: 'manager',
       email: 'manager@medibillpulse.com',
@@ -60,13 +62,14 @@ async function main() {
       name: 'Manager User',
       role: 'MANAGER',
       branchId: branch.id,
-      createdBy: admin.id
+      createdBy: admin.id,
+      isActive: true // Ensure user is active
     }
   });
 
   const cashier = await prisma.user.upsert({
     where: { username: 'cashier' },
-    update: {},
+    update: { isActive: true },
     create: {
       username: 'cashier',
       email: 'cashier@medibillpulse.com',
@@ -74,7 +77,8 @@ async function main() {
       name: 'Cashier User',
       role: 'CASHIER',
       branchId: branch.id,
-      createdBy: admin.id
+      createdBy: admin.id,
+      isActive: true // Ensure user is active
     }
   });
 

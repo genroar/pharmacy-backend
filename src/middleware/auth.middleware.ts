@@ -50,7 +50,11 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
     }
 
-    if (!user.isActive) {
+    // Check if we're in offline/SQLite mode
+    // In offline mode, allow access even if account is technically inactive
+    const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
+
+    if (!user.isActive && !isOfflineMode) {
       return res.status(401).json({
         message: 'Your account has been deactivated. Please contact your administrator.',
         code: 'ACCOUNT_DEACTIVATED'
