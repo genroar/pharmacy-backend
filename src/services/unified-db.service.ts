@@ -78,12 +78,16 @@ class UnifiedDatabaseService {
    * Get the appropriate database client based on connectivity
    */
   async getClient(): Promise<PrismaClient> {
-    const connectivityService = getConnectivityService();
     const dbService = getDatabaseService();
 
-    // Always use SQLite for Prisma operations (schema is SQLite)
-    // PostgreSQL is used for sync operations via raw SQL
-    return await dbService.getSQLiteClient();
+    // Get client from database service
+    const client = await dbService.getClient();
+
+    if (!client) {
+      throw new Error('Database client not available');
+    }
+
+    return client;
   }
 
   /**

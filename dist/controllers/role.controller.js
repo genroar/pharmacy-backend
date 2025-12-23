@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateUserRole = exports.getAllowedActions = exports.checkPermission = exports.getUserPermissions = exports.getRolePermissions = exports.getRoles = void 0;
 const db_util_1 = require("../utils/db.util");
 const permissions_1 = require("../config/permissions");
+const sync_helper_1 = require("../utils/sync-helper");
 const getRoles = async (req, res) => {
     try {
         if (!req.user) {
@@ -209,6 +210,9 @@ const updateUserRole = async (req, res) => {
                 branchId: true,
                 isActive: true
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('user', 'update', updatedUser).catch(err => {
+            console.error('[Sync] User role update sync failed:', err.message);
         });
         res.json({
             success: true,

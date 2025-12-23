@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas - allow empty strings and null for optional fields
@@ -247,6 +248,11 @@ export const createManufacturer = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('manufacturer', 'create', manufacturer).catch(err => {
+      console.error('[Sync] Manufacturer create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: manufacturer
@@ -313,6 +319,11 @@ export const updateManufacturer = async (req: AuthRequest, res: Response) => {
       data: updateData
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('manufacturer', 'update', manufacturer).catch(err => {
+      console.error('[Sync] Manufacturer update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: manufacturer
@@ -362,6 +373,11 @@ export const deleteManufacturer = async (req: AuthRequest, res: Response) => {
 
     await prisma.manufacturer.delete({
       where: { id }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('manufacturer', 'delete', { id }).catch(err => {
+      console.error('[Sync] Manufacturer delete sync failed:', err.message);
     });
 
     return res.json({

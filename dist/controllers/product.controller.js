@@ -7,6 +7,7 @@ exports.getStockMovements = exports.bulkDeleteProducts = exports.activateAllProd
 const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const sse_routes_1 = require("../routes/sse.routes");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 function serializeBigInt(obj) {
     if (obj === null || obj === undefined) {
@@ -42,7 +43,7 @@ const createProductSchema = joi_1.default.object({
     sku: joi_1.default.string().allow(''),
     categoryId: joi_1.default.string().required(),
     categoryName: joi_1.default.string().allow(''),
-    supplierId: joi_1.default.string().required(),
+    supplierId: joi_1.default.string().allow('', null).optional(),
     branchId: joi_1.default.string().required(),
     barcode: joi_1.default.string().allow(''),
     requiresPrescription: joi_1.default.boolean().default(false),
@@ -68,6 +69,11 @@ const updateProductSchema = joi_1.default.object({
 });
 const getProducts = async (req, res) => {
     try {
+        await Promise.all([
+            (0, sync_helper_1.pullLatestFromLive)('product').catch(err => console.log('[Sync] Pull products:', err.message)),
+            (0, sync_helper_1.pullLatestFromLive)('category').catch(err => console.log('[Sync] Pull categories:', err.message)),
+            (0, sync_helper_1.pullLatestFromLive)('batch').catch(err => console.log('[Sync] Pull batches:', err.message))
+        ]);
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', category = '', categoryType = '', branchId = '', lowStock = false, includeInactive = false } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -122,9 +128,24 @@ const getProducts = async (req, res) => {
                             id: true,
                             batchNo: true,
                             quantity: true,
+                            totalBoxes: true,
+                            unitsPerBox: true,
                             purchasePrice: true,
                             sellingPrice: true,
-                            expireDate: true
+                            expireDate: true,
+                            supplierName: true,
+                            supplier: {
+                                select: {
+                                    id: true,
+                                    name: true,
+                                    manufacturer: {
+                                        select: {
+                                            id: true,
+                                            name: true
+                                        }
+                                    }
+                                }
+                            }
                         },
                         orderBy: { expireDate: 'asc' }
                     }
@@ -236,22 +257,8 @@ const createProduct = async (req, res) => {
             };
             productData.sku = generateSKU(productData.name);
         }
-        if (productData.supplierId === 'default-supplier') {
-            let defaultSupplier = await prisma.supplier.findFirst({
-                where: { name: 'Default Supplier' }
-            });
-            if (!defaultSupplier) {
-                defaultSupplier = await prisma.supplier.create({
-                    data: {
-                        name: 'Default Supplier',
-                        contactPerson: 'System Generated',
-                        phone: '+92 300 0000000',
-                        createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-                        isActive: true
-                    }
-                });
-            }
-            productData.supplierId = defaultSupplier.id;
+        if (productData.supplierId === 'default-supplier' || productData.supplierId === '') {
+            productData.supplierId = undefined;
         }
         if (productData.barcode) {
             const existingProduct = await prisma.product.findFirst({
@@ -322,6 +329,9 @@ const createProduct = async (req, res) => {
             (0, sse_routes_1.notifyProductChange)(createdBy, 'created', product);
             (0, sse_routes_1.notifyInventoryChange)(createdBy, 'product_added', product);
         }
+        (0, sync_helper_1.syncAfterOperation)('product', 'create', product).catch(err => {
+            console.error('[Sync] Product create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: serializeBigInt(product)
@@ -403,6 +413,9 @@ const updateProduct = async (req, res) => {
         if (createdBy) {
             (0, sse_routes_1.notifyProductChange)(createdBy, 'updated', product);
         }
+        (0, sync_helper_1.syncAfterOperation)('product', 'update', product).catch(err => {
+            console.error('[Sync] Product update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: serializeBigInt(product)
@@ -455,6 +468,9 @@ const deleteProduct = async (req, res) => {
             (0, sse_routes_1.notifyProductChange)(createdBy, 'deleted', product);
             (0, sse_routes_1.notifyInventoryChange)(createdBy, 'product_removed', product);
         }
+        (0, sync_helper_1.syncAfterOperation)('product', 'delete', product).catch(err => {
+            console.error('[Sync] Product delete sync failed:', err.message);
+        });
         return res.json({
             success: true,
             message: 'Product permanently deleted from database'
@@ -584,22 +600,8 @@ const bulkImportProducts = async (req, res) => {
                     }
                     productData.categoryId = category.id;
                 }
-                if (productData.supplierId === 'default-supplier') {
-                    let defaultSupplier = await prisma.supplier.findFirst({
-                        where: { name: 'Default Supplier' }
-                    });
-                    if (!defaultSupplier) {
-                        defaultSupplier = await prisma.supplier.create({
-                            data: {
-                                name: 'Default Supplier',
-                                contactPerson: 'System Generated',
-                                phone: '+92 300 0000000',
-                                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-                                isActive: true
-                            }
-                        });
-                    }
-                    productData.supplierId = defaultSupplier.id;
+                if (productData.supplierId === 'default-supplier' || productData.supplierId === '') {
+                    productData.supplierId = undefined;
                 }
                 if (!productData.branchId) {
                     const availableBranch = await prisma.branch.findFirst({

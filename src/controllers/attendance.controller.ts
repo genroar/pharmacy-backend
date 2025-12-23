@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -103,6 +104,11 @@ export const checkIn = async (req: Request, res: Response) => {
           }
         }
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('attendance', 'create', attendance).catch(err => {
+      console.error('[Sync] Attendance check-in sync failed:', err.message);
     });
 
     return res.status(201).json({
@@ -403,6 +409,11 @@ export const updateAttendance = async (req: Request, res: Response) => {
           }
         }
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('attendance', 'update', attendance).catch(err => {
+      console.error('[Sync] Attendance update sync failed:', err.message);
     });
 
     return res.json({

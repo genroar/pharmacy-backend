@@ -7,6 +7,7 @@ import { CreateProductData, UpdateProductData, StockMovementData } from '../mode
 import { validate } from '../middleware/validation.middleware';
 import { AuthRequest, buildAdminWhereClause, buildBranchWhereClause } from '../middleware/auth.middleware';
 import { notifyProductChange, notifyInventoryChange } from '../routes/sse.routes';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Utility function to convert BigInt and Date values to strings for JSON serialization
@@ -52,7 +53,7 @@ const createProductSchema = Joi.object({
   sku: Joi.string().allow(''),
   categoryId: Joi.string().required(),
   categoryName: Joi.string().allow(''), // For bulk import - category name when categoryId doesn't exist
-  supplierId: Joi.string().required(),
+  supplierId: Joi.string().allow('', null).optional(), // Optional - supplier is assigned to batches, not products
   branchId: Joi.string().required(),
   barcode: Joi.string().allow(''),
   requiresPrescription: Joi.boolean().default(false),
@@ -80,7 +81,16 @@ const updateProductSchema = Joi.object({
 
 export const getProducts = async (req: AuthRequest, res: Response) => {
   try {
+    // 🔄 Pull latest products from live database FIRST (wait for completion)
+    // This ensures we show the most up-to-date data (including external changes)
+    await Promise.all([
+      pullLatestFromLive('product').catch(err => console.log('[Sync] Pull products:', err.message)),
+      pullLatestFromLive('category').catch(err => console.log('[Sync] Pull categories:', err.message)),
+      pullLatestFromLive('batch').catch(err => console.log('[Sync] Pull batches:', err.message))
+    ]);
+
     const prisma = await getPrisma();
+
     const {
       page = 1,
       limit = 10,
@@ -155,9 +165,24 @@ export const getProducts = async (req: AuthRequest, res: Response) => {
               id: true,
               batchNo: true,
               quantity: true,
-              purchasePrice: true, // Add purchasePrice for total value calculation
+              totalBoxes: true,      // Original boxes purchased
+              unitsPerBox: true,     // Units per box for calculating original quantity
+              purchasePrice: true,   // Add purchasePrice for total value calculation
               sellingPrice: true,
-              expireDate: true
+              expireDate: true,
+              supplierName: true,
+              supplier: {
+                select: {
+                  id: true,
+                  name: true,
+                  manufacturer: {
+                    select: {
+                      id: true,
+                      name: true
+                    }
+                  }
+                }
+              }
             },
             orderBy: { expireDate: 'asc' }
           }
@@ -283,25 +308,10 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
       productData.sku = generateSKU(productData.name);
     }
 
-    // Handle default supplier case
-    if (productData.supplierId === 'default-supplier') {
-      // Check if default supplier exists, if not create it
-      let defaultSupplier = await prisma.supplier.findFirst({
-        where: { name: 'Default Supplier' }
-      });
-
-      if (!defaultSupplier) {
-        defaultSupplier = await prisma.supplier.create({
-          data: {
-            name: 'Default Supplier',
-            contactPerson: 'System Generated',
-            phone: '+92 300 0000000',
-            createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-            isActive: true
-          }
-        });
-      }
-      productData.supplierId = defaultSupplier.id;
+    // Supplier is optional for products - it's assigned at batch level
+    // Clear invalid supplierId values
+    if (productData.supplierId === 'default-supplier' || productData.supplierId === '') {
+      productData.supplierId = undefined;
     }
 
     // Check if barcode already exists for this admin
@@ -387,6 +397,12 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
       notifyProductChange(createdBy, 'created', product);
       notifyInventoryChange(createdBy, 'product_added', product);
     }
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC - Push to PostgreSQL & pull any external changes
+    // This ensures the live database is updated right away, and we get any changes from it
+    syncAfterOperation('product', 'create', product).catch(err => {
+      console.error('[Sync] Product create sync failed:', err.message);
+    });
 
     return res.status(201).json({
       success: true,
@@ -481,6 +497,11 @@ export const updateProduct = async (req: AuthRequest, res: Response) => {
       notifyProductChange(createdBy, 'updated', product);
     }
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC - Push update to PostgreSQL
+    syncAfterOperation('product', 'update', product).catch(err => {
+      console.error('[Sync] Product update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: serializeBigInt(product)
@@ -545,6 +566,11 @@ export const deleteProduct = async (req: AuthRequest, res: Response) => {
       notifyProductChange(createdBy, 'deleted', product);
       notifyInventoryChange(createdBy, 'product_removed', product);
     }
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC - Push delete to PostgreSQL
+    syncAfterOperation('product', 'delete', product).catch(err => {
+      console.error('[Sync] Product delete sync failed:', err.message);
+    });
 
     return res.json({
       success: true,
@@ -707,25 +733,9 @@ export const bulkImportProducts = async (req: AuthRequest, res: Response) => {
           productData.categoryId = category.id;
         }
 
-        // Handle default supplier case
-        if (productData.supplierId === 'default-supplier') {
-          // Check if default supplier exists, if not create it
-          let defaultSupplier = await prisma.supplier.findFirst({
-            where: { name: 'Default Supplier' }
-          });
-
-          if (!defaultSupplier) {
-            defaultSupplier = await prisma.supplier.create({
-              data: {
-                name: 'Default Supplier',
-                contactPerson: 'System Generated',
-                phone: '+92 300 0000000',
-                createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id',
-                isActive: true
-              }
-            });
-          }
-          productData.supplierId = defaultSupplier.id;
+        // Supplier is optional for products - assigned at batch level
+        if (productData.supplierId === 'default-supplier' || productData.supplierId === '') {
+          productData.supplierId = undefined;
         }
 
         // Auto-assign branchId if missing

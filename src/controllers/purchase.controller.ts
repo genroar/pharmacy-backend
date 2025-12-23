@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 
 // Joi schemas for validation
 const createPurchaseSchema = Joi.object({
@@ -335,6 +336,11 @@ export const createPurchase = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('purchase', 'create', completePurchase).catch(err => {
+      console.error('[Sync] Purchase create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: completePurchase,
@@ -426,6 +432,11 @@ export const updatePurchase = async (req: AuthRequest, res: Response) => {
       },
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('purchase', 'update', purchase).catch(err => {
+      console.error('[Sync] Purchase update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: purchase,
@@ -490,6 +501,11 @@ export const deletePurchase = async (req: AuthRequest, res: Response) => {
       await tx.purchase.delete({
         where: { id },
       });
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('purchase', 'delete', { id }).catch(err => {
+      console.error('[Sync] Purchase delete sync failed:', err.message);
     });
 
     return res.json({

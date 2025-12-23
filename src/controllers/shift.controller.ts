@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -101,6 +102,11 @@ export const startShift = async (req: Request, res: Response) => {
           }
         }
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('shift', 'create', shift).catch(err => {
+      console.error('[Sync] Shift create sync failed:', err.message);
     });
 
     return res.status(201).json({

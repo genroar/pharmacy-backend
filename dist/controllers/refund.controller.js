@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getRefundById = exports.getRefunds = exports.createRefund = void 0;
 const db_util_1 = require("../utils/db.util");
 const sse_routes_1 = require("../routes/sse.routes");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 function serializeBigInt(obj) {
     if (obj === null || obj === undefined) {
@@ -200,6 +201,9 @@ const createRefund = async (req, res) => {
         if (createdBy) {
             (0, sse_routes_1.notifyRefundChange)(createdBy, 'created', result.refund);
         }
+        (0, sync_helper_1.syncAfterOperation)('refund', 'create', result.refund).catch(err => {
+            console.error('[Sync] Refund create sync failed:', err.message);
+        });
         res.status(201).json({
             success: true,
             data: {

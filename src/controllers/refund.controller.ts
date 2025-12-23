@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { AuthRequest, buildBranchWhereClause, buildBranchWhereClauseForRelation } from '../middleware/auth.middleware';
 import { notifyRefundChange } from '../routes/sse.routes';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Utility function to convert BigInt, Decimal, and Date values to strings for JSON serialization
@@ -266,6 +267,11 @@ export const createRefund = async (req: AuthRequest, res: Response): Promise<voi
     if (createdBy) {
       notifyRefundChange(createdBy, 'created', result.refund);
     }
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('refund', 'create', result.refund).catch(err => {
+      console.error('[Sync] Refund create sync failed:', err.message);
+    });
 
     res.status(201).json({
       success: true,

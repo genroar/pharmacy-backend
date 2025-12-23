@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activateUser = exports.deleteUser = exports.updateUser = exports.createUser = exports.getUser = exports.getUsers = void 0;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createUserSchema = joi_1.default.object({
     username: joi_1.default.string().min(3).max(30).required(),
@@ -28,6 +29,7 @@ const updateUserSchema = joi_1.default.object({
 });
 const getUsers = async (req, res) => {
     try {
+        await (0, sync_helper_1.pullLatestFromLive)('user').catch(err => console.log('[Sync] Pull users:', err.message));
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', role = '', branchId = '', isActive = true } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -282,6 +284,9 @@ const createUser = async (req, res) => {
             }
         });
         const { password, ...userWithoutPassword } = user;
+        (0, sync_helper_1.syncAfterOperation)('user', 'create', userWithoutPassword).catch(err => {
+            console.error('[Sync] User create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: userWithoutPassword
@@ -364,6 +369,9 @@ const updateUser = async (req, res) => {
             }
         });
         const { password, ...userWithoutPassword } = user;
+        (0, sync_helper_1.syncAfterOperation)('user', 'update', userWithoutPassword).catch(err => {
+            console.error('[Sync] User update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: userWithoutPassword

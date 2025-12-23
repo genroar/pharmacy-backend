@@ -8,7 +8,7 @@ export interface CreateProductData {
     sku: string;
     categoryId: string;
     categoryName?: string; // For bulk import - category name when categoryId doesn't exist
-    supplierId: string;
+    supplierId?: string; // Optional - supplier is assigned at batch level
     branchId: string;
     barcode?: string;
     requiresPrescription: boolean;

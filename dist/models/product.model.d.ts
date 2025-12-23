@@ -5,7 +5,7 @@ export interface CreateProductData {
     sku: string;
     categoryId: string;
     categoryName?: string;
-    supplierId: string;
+    supplierId?: string;
     branchId: string;
     barcode?: string;
     requiresPrescription: boolean;

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -250,6 +251,11 @@ export const createShelf = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('shelf', 'create', shelf).catch(err => {
+      console.error('[Sync] Shelf create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: shelf
@@ -316,6 +322,11 @@ export const updateShelf = async (req: AuthRequest, res: Response) => {
       data: updateData
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('shelf', 'update', shelf).catch(err => {
+      console.error('[Sync] Shelf update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: shelf
@@ -365,6 +376,11 @@ export const deleteShelf = async (req: AuthRequest, res: Response) => {
 
     await prisma.shelf.delete({
       where: { id }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('shelf', 'delete', { id }).catch(err => {
+      console.error('[Sync] Shelf delete sync failed:', err.message);
     });
 
     return res.json({

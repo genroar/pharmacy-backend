@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { ROLE_PERMISSIONS, getRolePermissions as getRolePermissionsConfig, getAccessibleResources as getAccessibleResourcesConfig, getAllowedActions as getAllowedActionsConfig, hasPermission } from '../config/permissions';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 
 // Get all available roles and their permissions
 export const getRoles = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -233,6 +234,11 @@ export const updateUserRole = async (req: AuthRequest, res: Response): Promise<v
         branchId: true,
         isActive: true
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'update', updatedUser).catch(err => {
+      console.error('[Sync] User role update sync failed:', err.message);
     });
 
     res.json({

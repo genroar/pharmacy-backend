@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEmployeeStats = exports.deleteEmployee = exports.updateEmployee = exports.createEmployee = exports.getEmployee = exports.getEmployees = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createEmployeeSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
@@ -50,6 +51,7 @@ const generateEmployeeId = async (prisma) => {
 };
 const getEmployees = async (req, res) => {
     try {
+        await (0, sync_helper_1.pullLatestFromLive)('employee').catch(err => console.log('[Sync] Pull employees:', err.message));
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', status = '', branchId = '', isActive = true } = req.query;
         console.log('Getting employees with params:', { page, limit, search, status, branchId, isActive });
@@ -198,6 +200,9 @@ const createEmployee = async (req, res) => {
                 }
             }
         });
+        (0, sync_helper_1.syncAfterOperation)('employee', 'create', employee).catch(err => {
+            console.error('[Sync] Employee create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: employee,
@@ -272,6 +277,9 @@ const updateEmployee = async (req, res) => {
                 }
             }
         });
+        (0, sync_helper_1.syncAfterOperation)('employee', 'update', employee).catch(err => {
+            console.error('[Sync] Employee update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: employee,
@@ -300,9 +308,12 @@ const deleteEmployee = async (req, res) => {
                 message: 'Employee not found'
             });
         }
-        await prisma.employee.update({
+        const deletedEmployee = await prisma.employee.update({
             where: { id },
             data: { isActive: false }
+        });
+        (0, sync_helper_1.syncAfterOperation)('employee', 'update', deletedEmployee).catch(err => {
+            console.error('[Sync] Employee delete sync failed:', err.message);
         });
         return res.json({
             success: true,

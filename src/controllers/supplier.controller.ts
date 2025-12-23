@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -46,14 +47,17 @@ export const getSuppliers = async (req: AuthRequest, res: Response) => {
       selectedBranchId
     });
 
-    // Strict branch-level data isolation
+    // Strict branch-level data isolation - Only show suppliers that belong to a specific branch
+    // Exclude suppliers with NULL branchId (legacy data)
+    where.branchId = { not: null };
+
     if (req.user?.role === 'SUPERADMIN' || req.user?.role === 'ADMIN') {
       // SUPERADMIN/ADMIN: Must select a branch to see data
       if (selectedBranchId) {
         where.branchId = selectedBranchId;
       } else if (selectedCompanyId) {
-        // Show all branches under the company
-        where.companyId = selectedCompanyId;
+        // Show suppliers from branches under the company
+        where.branch = { companyId: selectedCompanyId };
       } else {
         // No branch selected - show empty (force branch selection)
         where.branchId = 'must-select-branch';
@@ -264,6 +268,11 @@ export const createSupplier = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('supplier', 'create', supplier).catch(err => {
+      console.error('[Sync] Supplier create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: supplier
@@ -340,6 +349,11 @@ export const updateSupplier = async (req: AuthRequest, res: Response) => {
       data: updateData
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('supplier', 'update', supplier).catch(err => {
+      console.error('[Sync] Supplier update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: supplier
@@ -407,6 +421,11 @@ export const deleteSupplier = async (req: AuthRequest, res: Response) => {
 
     await prisma.supplier.delete({
       where: { id }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('supplier', 'delete', { id }).catch(err => {
+      console.error('[Sync] Supplier delete sync failed:', err.message);
     });
 
     return res.json({

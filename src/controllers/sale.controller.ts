@@ -6,6 +6,7 @@ import { getPrisma } from '../utils/db.util';
 import { CreateSaleData, SaleResponse, PaymentStatus } from '../models/sale.model';
 import { AuthRequest, buildBranchWhereClause } from '../middleware/auth.middleware';
 import { notifySaleChange } from '../routes/sse.routes';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -34,6 +35,12 @@ const createSaleSchema = Joi.object({
 
 export const getSales = async (req: AuthRequest, res: Response) => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await Promise.all([
+      pullLatestFromLive('sale').catch(err => console.log('[Sync] Pull sales:', err.message)),
+      pullLatestFromLive('saleItem').catch(err => console.log('[Sync] Pull saleItems:', err.message))
+    ]);
+
     const prisma = await getPrisma();
     const {
       page = 1,
@@ -668,6 +675,11 @@ export const createSale = async (req: AuthRequest, res: Response) => {
       notifySaleChange(createdBy, 'created', completeSale);
     }
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('sale', 'create', completeSale).catch(err => {
+      console.error('[Sync] Sale create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: {
@@ -873,6 +885,11 @@ export const updateSale = async (req: AuthRequest, res: Response) => {
     if (createdBy) {
       notifySaleChange(createdBy, 'updated', serializedSale);
     }
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('sale', 'update', updatedSale).catch(err => {
+      console.error('[Sync] Sale update sync failed:', err.message);
+    });
 
     return res.json({
       success: true,

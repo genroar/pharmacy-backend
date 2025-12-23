@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { getPrisma } from '../utils/db.util';
 import { CreateUserData, UpdateUserData } from '../models/user.model';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -29,6 +30,9 @@ const updateUserSchema = Joi.object({
 
 export const getUsers = async (req: AuthRequest, res: Response) => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await pullLatestFromLive('user').catch(err => console.log('[Sync] Pull users:', err.message));
+
     const prisma = await getPrisma();
     const {
       page = 1,
@@ -347,6 +351,11 @@ export const createUser = async (req: AuthRequest, res: Response) => {
     // Remove password from response
     const { password, ...userWithoutPassword } = user;
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'create', userWithoutPassword).catch(err => {
+      console.error('[Sync] User create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: userWithoutPassword
@@ -447,6 +456,11 @@ export const updateUser = async (req: Request, res: Response) => {
 
     // Remove password from response
     const { password, ...userWithoutPassword } = user;
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'update', userWithoutPassword).catch(err => {
+      console.error('[Sync] User update sync failed:', err.message);
+    });
 
     return res.json({
       success: true,

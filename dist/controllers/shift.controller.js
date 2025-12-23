@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getShiftStats = exports.updateShift = exports.getActiveShift = exports.getShifts = exports.endShift = exports.startShift = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const startShiftSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
@@ -90,6 +91,9 @@ const startShift = async (req, res) => {
                     }
                 }
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('shift', 'create', shift).catch(err => {
+            console.error('[Sync] Shift create sync failed:', err.message);
         });
         return res.status(201).json({
             success: true,

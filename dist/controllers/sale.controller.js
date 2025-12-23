@@ -8,6 +8,7 @@ require("../config/database.init");
 const db_util_1 = require("../utils/db.util");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const sse_routes_1 = require("../routes/sse.routes");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createSaleSchema = joi_1.default.object({
     customerId: joi_1.default.string().allow(null),
@@ -31,6 +32,10 @@ const createSaleSchema = joi_1.default.object({
 });
 const getSales = async (req, res) => {
     try {
+        await Promise.all([
+            (0, sync_helper_1.pullLatestFromLive)('sale').catch(err => console.log('[Sync] Pull sales:', err.message)),
+            (0, sync_helper_1.pullLatestFromLive)('saleItem').catch(err => console.log('[Sync] Pull saleItems:', err.message))
+        ]);
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, startDate = '', endDate = '', branchId = '', customerId = '', paymentMethod = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -578,6 +583,9 @@ const createSale = async (req, res) => {
         if (createdBy) {
             (0, sse_routes_1.notifySaleChange)(createdBy, 'created', completeSale);
         }
+        (0, sync_helper_1.syncAfterOperation)('sale', 'create', completeSale).catch(err => {
+            console.error('[Sync] Sale create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: {
@@ -761,6 +769,9 @@ const updateSale = async (req, res) => {
         if (createdBy) {
             (0, sse_routes_1.notifySaleChange)(createdBy, 'updated', serializedSale);
         }
+        (0, sync_helper_1.syncAfterOperation)('sale', 'update', updatedSale).catch(err => {
+            console.error('[Sync] Sale update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: serializedSale

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -53,6 +54,9 @@ const generateEmployeeId = async (prisma: any): Promise<string> => {
 
 export const getEmployees = async (req: Request, res: Response) => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await pullLatestFromLive('employee').catch(err => console.log('[Sync] Pull employees:', err.message));
+
     const prisma = await getPrisma();
     const {
       page = 1,
@@ -233,6 +237,11 @@ export const createEmployee = async (req: Request, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('employee', 'create', employee).catch(err => {
+      console.error('[Sync] Employee create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: employee,
@@ -320,6 +329,11 @@ export const updateEmployee = async (req: Request, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('employee', 'update', employee).catch(err => {
+      console.error('[Sync] Employee update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: employee,
@@ -352,9 +366,14 @@ export const deleteEmployee = async (req: Request, res: Response) => {
     }
 
     // Soft delete by setting isActive to false
-    await prisma.employee.update({
+    const deletedEmployee = await prisma.employee.update({
       where: { id },
       data: { isActive: false }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('employee', 'update', deletedEmployee).catch(err => {
+      console.error('[Sync] Employee delete sync failed:', err.message);
     });
 
     return res.json({

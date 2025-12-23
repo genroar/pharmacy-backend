@@ -115,8 +115,12 @@ class EnhancedSyncService {
     };
 
     try {
-      const sqliteClient = await dbService.getSQLiteClient();
+      const sqliteClient = dbService.getSQLiteClient();
       const postgresUrl = dbService.getPostgreSQLUrl();
+
+      if (!sqliteClient) {
+        throw new Error('SQLite client not available');
+      }
 
       if (!postgresUrl) {
         throw new Error('PostgreSQL URL not configured');
@@ -190,8 +194,12 @@ class EnhancedSyncService {
     };
 
     try {
-      const sqliteClient = await dbService.getSQLiteClient();
+      const sqliteClient = dbService.getSQLiteClient();
       const postgresUrl = dbService.getPostgreSQLUrl();
+
+      if (!sqliteClient) {
+        throw new Error('SQLite client not available');
+      }
 
       if (!postgresUrl) {
         throw new Error('PostgreSQL URL not configured');

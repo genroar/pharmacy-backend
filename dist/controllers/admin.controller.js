@@ -7,6 +7,7 @@ exports.getSuperAdminStats = exports.getAdminUsers = exports.deleteAdmin = expor
 const db_util_1 = require("../utils/db.util");
 const joi_1 = __importDefault(require("joi"));
 const sse_routes_1 = require("../routes/sse.routes");
+const sync_helper_1 = require("../utils/sync-helper");
 const createAdminSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
     email: joi_1.default.string().email().required(),
@@ -392,6 +393,9 @@ const updateAdmin = async (req, res) => {
                 (0, sse_routes_1.notifyUserReactivation)(id);
             }
         }
+        (0, sync_helper_1.syncAfterOperation)('user', 'update', admin).catch(err => {
+            console.error('[Sync] Admin update sync failed:', err.message);
+        });
         res.json({
             success: true,
             data: admin,

@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCustomerPurchaseHistory = exports.deleteCustomer = exports.updateCustomer = exports.createCustomer = exports.getCustomer = exports.getCustomers = void 0;
 const db_util_1 = require("../utils/db.util");
 const sse_routes_1 = require("../routes/sse.routes");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createCustomerSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
@@ -24,6 +25,7 @@ const updateCustomerSchema = joi_1.default.object({
 });
 const getCustomers = async (req, res) => {
     try {
+        await (0, sync_helper_1.pullLatestFromLive)('customer').catch(err => console.log('[Sync] Pull customers:', err.message));
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '', branchId = '', vip = false, createdByRole = '' } = req.query;
         console.log('🔍 getCustomers - User context:', {
@@ -384,6 +386,9 @@ const createCustomer = async (req, res) => {
         if (createdBy) {
             (0, sse_routes_1.notifyCustomerChange)(createdBy, 'created', customer);
         }
+        (0, sync_helper_1.syncAfterOperation)('customer', 'create', customer).catch(err => {
+            console.error('[Sync] Customer create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: customer,
@@ -463,6 +468,9 @@ const updateCustomer = async (req, res) => {
                 }
             }
         });
+        (0, sync_helper_1.syncAfterOperation)('customer', 'update', customer).catch(err => {
+            console.error('[Sync] Customer update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: customer
@@ -490,9 +498,12 @@ const deleteCustomer = async (req, res) => {
                 message: 'Customer not found'
             });
         }
-        await prisma.customer.update({
+        const deletedCustomer = await prisma.customer.update({
             where: { id },
             data: { isActive: false }
+        });
+        (0, sync_helper_1.syncAfterOperation)('customer', 'update', deletedCustomer).catch(err => {
+            console.error('[Sync] Customer delete sync failed:', err.message);
         });
         return res.json({
             success: true,

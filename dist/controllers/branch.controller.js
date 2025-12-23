@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteBranch = exports.updateBranch = exports.createBranch = exports.getBranch = exports.getBranches = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createBranchSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
@@ -25,16 +26,53 @@ const updateBranchSchema = joi_1.default.object({
 });
 const getBranches = async (req, res) => {
     try {
+        await Promise.all([
+            (0, sync_helper_1.pullLatestFromLive)('branch').catch(err => console.log('[Sync] Pull branches:', err.message)),
+            (0, sync_helper_1.pullLatestFromLive)('company').catch(err => console.log('[Sync] Pull companies:', err.message))
+        ]);
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 10, search = '' } = req.query;
+        const user = req.user;
         const skip = (Number(page) - 1) * Number(limit);
         const take = Number(limit);
         const where = {
             isActive: true
         };
-        if (req.user?.selectedCompanyId) {
-            where.companyId = req.user.selectedCompanyId;
-            console.log('🏢 Filtering branches by selected company:', req.user.selectedCompanyId);
+        const selectedCompanyId = req.headers['x-company-id'] || req.user?.selectedCompanyId;
+        if (selectedCompanyId) {
+            where.companyId = selectedCompanyId;
+            console.log('🏢 Filtering branches by selected company:', selectedCompanyId);
+        }
+        else {
+            if (user?.role === 'SUPERADMIN') {
+                console.log('🏢 SUPERADMIN - showing all branches');
+            }
+            else if (user?.role === 'ADMIN') {
+                const adminCompanies = await prisma.company.findMany({
+                    where: { createdBy: user.id, isActive: true },
+                    select: { id: true }
+                });
+                const companyIds = adminCompanies.map(c => c.id);
+                if (companyIds.length > 0) {
+                    where.companyId = { in: companyIds };
+                    console.log('🏢 ADMIN - showing branches of', companyIds.length, 'companies');
+                }
+                else {
+                    where.id = 'no-branches';
+                }
+            }
+            else if (user?.role === 'MANAGER' || user?.role === 'CASHIER') {
+                if (user?.branchId) {
+                    where.id = user.branchId;
+                    console.log('🏢 MANAGER/CASHIER - showing only their branch:', user.branchId);
+                }
+                else {
+                    where.id = 'no-access';
+                }
+            }
+            else {
+                where.id = 'no-access';
+            }
         }
         if (search) {
             where.OR = [
@@ -68,10 +106,59 @@ const getBranches = async (req, res) => {
             }),
             prisma.branch.count({ where })
         ]);
+        const enhancedBranches = await Promise.all(branches.map(async (branch) => {
+            let manager = null;
+            if (branch.managerId) {
+                try {
+                    const managerUser = await prisma.user.findUnique({
+                        where: { id: branch.managerId },
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true
+                        }
+                    });
+                    manager = managerUser;
+                }
+                catch (err) {
+                    console.log('Could not find manager with id:', branch.managerId);
+                }
+            }
+            if (!manager) {
+                try {
+                    console.log(`Looking for MANAGER in branch: ${branch.id} (${branch.name})`);
+                    const branchManager = await prisma.user.findFirst({
+                        where: {
+                            branchId: branch.id,
+                            role: 'MANAGER'
+                        },
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true
+                        }
+                    });
+                    console.log(`Branch ${branch.name} - Manager query result:`, branchManager);
+                    if (branchManager) {
+                        manager = branchManager;
+                        console.log(`✅ Found MANAGER for branch ${branch.name}: ${branchManager.name}`);
+                    }
+                }
+                catch (err) {
+                    console.log('Error finding branch manager:', err);
+                }
+            }
+            return {
+                ...branch,
+                manager: manager
+            };
+        }));
         return res.json({
             success: true,
             data: {
-                branches,
+                branches: enhancedBranches,
                 pagination: {
                     page: Number(page),
                     limit: Number(limit),
@@ -194,6 +281,9 @@ const createBranch = async (req, res) => {
                 }
             }
         });
+        (0, sync_helper_1.syncAfterOperation)('branch', 'create', branch).catch(err => {
+            console.error('[Sync] Branch create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: branch
@@ -248,6 +338,9 @@ const updateBranch = async (req, res) => {
             where: { id },
             data: updateData
         });
+        (0, sync_helper_1.syncAfterOperation)('branch', 'update', branch).catch(err => {
+            console.error('[Sync] Branch update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: branch
@@ -275,9 +368,12 @@ const deleteBranch = async (req, res) => {
                 message: 'Branch not found'
             });
         }
-        await prisma.branch.update({
+        const deletedBranch = await prisma.branch.update({
             where: { id },
             data: { isActive: false }
+        });
+        (0, sync_helper_1.syncAfterOperation)('branch', 'update', deletedBranch).catch(err => {
+            console.error('[Sync] Branch delete sync failed:', err.message);
         });
         return res.json({
             success: true,

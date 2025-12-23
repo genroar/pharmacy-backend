@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteSupplier = exports.updateSupplier = exports.createSupplier = exports.getSupplier = exports.getSuppliers = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createSupplierSchema = joi_1.default.object({
     name: joi_1.default.string().required(),
@@ -40,12 +41,13 @@ const getSuppliers = async (req, res) => {
             selectedCompanyId,
             selectedBranchId
         });
+        where.branchId = { not: null };
         if (req.user?.role === 'SUPERADMIN' || req.user?.role === 'ADMIN') {
             if (selectedBranchId) {
                 where.branchId = selectedBranchId;
             }
             else if (selectedCompanyId) {
-                where.companyId = selectedCompanyId;
+                where.branch = { companyId: selectedCompanyId };
             }
             else {
                 where.branchId = 'must-select-branch';
@@ -232,6 +234,9 @@ const createSupplier = async (req, res) => {
                 createdBy: req.user?.createdBy || req.user?.id || 'default-admin-id'
             }
         });
+        (0, sync_helper_1.syncAfterOperation)('supplier', 'create', supplier).catch(err => {
+            console.error('[Sync] Supplier create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: supplier
@@ -292,6 +297,9 @@ const updateSupplier = async (req, res) => {
             where: { id },
             data: updateData
         });
+        (0, sync_helper_1.syncAfterOperation)('supplier', 'update', supplier).catch(err => {
+            console.error('[Sync] Supplier update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: supplier
@@ -350,6 +358,9 @@ const deleteSupplier = async (req, res) => {
         }
         await prisma.supplier.delete({
             where: { id }
+        });
+        (0, sync_helper_1.syncAfterOperation)('supplier', 'delete', { id }).catch(err => {
+            console.error('[Sync] Supplier delete sync failed:', err.message);
         });
         return res.json({
             success: true,

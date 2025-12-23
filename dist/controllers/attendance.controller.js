@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAttendanceStats = exports.updateAttendance = exports.getTodayAttendance = exports.getAttendance = exports.checkOut = exports.checkIn = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const checkInSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
@@ -91,6 +92,9 @@ const checkIn = async (req, res) => {
                     }
                 }
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('attendance', 'create', attendance).catch(err => {
+            console.error('[Sync] Attendance check-in sync failed:', err.message);
         });
         return res.status(201).json({
             success: true,
@@ -354,6 +358,9 @@ const updateAttendance = async (req, res) => {
                     }
                 }
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('attendance', 'update', attendance).catch(err => {
+            console.error('[Sync] Attendance update sync failed:', err.message);
         });
         return res.json({
             success: true,

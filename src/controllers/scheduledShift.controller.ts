@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -143,6 +144,11 @@ export const createScheduledShift = async (req: Request, res: Response) => {
       createdAt: scheduledShift.createdAt.toISOString(),
       updatedAt: scheduledShift.updatedAt.toISOString()
     };
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('scheduledShift', 'create', scheduledShift).catch(err => {
+      console.error('[Sync] ScheduledShift create sync failed:', err.message);
+    });
 
     return res.status(201).json({
       success: true,
@@ -429,6 +435,11 @@ export const updateScheduledShift = async (req: Request, res: Response) => {
       updatedAt: updatedShift.updatedAt.toISOString()
     };
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('scheduledShift', 'update', updatedShift).catch(err => {
+      console.error('[Sync] ScheduledShift update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: transformedShift,
@@ -464,6 +475,11 @@ export const deleteScheduledShift = async (req: Request, res: Response) => {
     // Delete the scheduled shift (cascade will handle assigned users)
     await prisma.scheduledShift.delete({
       where: { id }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('scheduledShift', 'delete', { id }).catch(err => {
+      console.error('[Sync] ScheduledShift delete sync failed:', err.message);
     });
 
     return res.json({

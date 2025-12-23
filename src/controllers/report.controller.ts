@@ -22,7 +22,8 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       startDate = '',
       endDate = '',
       branchId = '',
-      groupBy = 'day'
+      groupBy = 'day',
+      period = '' // 'today', 'week', 'month', 'year' - used to determine grouping strategy
     } = req.query;
 
     console.log('Sales report request:', { startDate, endDate, branchId, groupBy });
@@ -38,7 +39,10 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) {
-        where.createdAt.gte = new Date(startDate as string);
+        // Set start date to beginning of day (00:00:00)
+        const startDateObj = new Date(startDate as string);
+        startDateObj.setHours(0, 0, 0, 0);
+        where.createdAt.gte = startDateObj;
       }
       if (endDate) {
         // Add 23:59:59 to end date to include the entire day
@@ -46,6 +50,11 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
         endDateWithTime.setHours(23, 59, 59, 999);
         where.createdAt.lte = endDateWithTime;
       }
+
+      console.log('Date filter applied:', {
+        startDate: where.createdAt.gte?.toISOString(),
+        endDate: where.createdAt.lte?.toISOString()
+      });
     } else {
       // If no date range provided, show the most recent day's sales (for "today" filter)
       const mostRecentSale = await prisma.sale.findFirst({
@@ -169,21 +178,70 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
     );
 
     // Get sales trend data
-    let salesTrend;
-    if (groupBy === 'day') {
-      salesTrend = await prisma.sale.groupBy({
-        by: ['createdAt'],
+    let salesTrend: Array<{
+      createdAt: Date;
+      _sum: { totalAmount: number };
+      _count: { id: number };
+    }> = [];
+    if (groupBy === 'day' && period === 'today') {
+      // For 'today' period, return individual sales so frontend can group by hour
+      const sales = await prisma.sale.findMany({
         where,
-        _sum: {
+        select: {
+          createdAt: true,
           totalAmount: true
-        },
-        _count: {
-          id: true
         },
         orderBy: {
           createdAt: 'asc'
         }
       });
+
+      console.log(`[Sales Trend] Found ${sales.length} sales for today period`);
+
+      // Return individual sales - frontend will group by hour
+      salesTrend = sales.map((sale: any) => ({
+        createdAt: new Date(sale.createdAt),
+        _sum: { totalAmount: sale.totalAmount || 0 },
+        _count: { id: 1 } // Each sale is 1 transaction
+      }));
+
+      console.log(`[Sales Trend] Returning ${salesTrend.length} individual sales for frontend to group by hour`);
+    } else if (groupBy === 'day') {
+      // Group by day - fetch all sales and group by date
+      const sales = await prisma.sale.findMany({
+        where,
+        select: {
+          createdAt: true,
+          totalAmount: true
+        },
+        orderBy: {
+          createdAt: 'asc'
+        }
+      });
+
+      console.log(`[Sales Trend] Found ${sales.length} sales for day grouping`);
+
+      // Group by date (YYYY-MM-DD)
+      const dailyData: { [key: string]: { total: number; count: number } } = {};
+      sales.forEach((sale: any) => {
+        const dateKey = sale.createdAt.toISOString().split('T')[0]; // YYYY-MM-DD
+        if (!dailyData[dateKey]) {
+          dailyData[dateKey] = { total: 0, count: 0 };
+        }
+        dailyData[dateKey].total += sale.totalAmount || 0;
+        dailyData[dateKey].count += 1;
+      });
+
+      console.log(`[Sales Trend] Grouped into ${Object.keys(dailyData).length} days`);
+
+      // Convert to salesTrend format
+      salesTrend = Object.entries(dailyData).map(([date, data]) => ({
+        createdAt: new Date(date + 'T00:00:00'),
+        _sum: { totalAmount: data.total },
+        _count: { id: data.count }
+      })).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+      console.log(`[Sales Trend] Final salesTrend array length: ${salesTrend.length}`);
     } else if (groupBy === 'month') {
       // Group by month
       const sales = await prisma.sale.findMany({
@@ -275,6 +333,19 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
       }));
     }
 
+    // Ensure salesTrend is always an array with proper structure
+    if (!salesTrend || !Array.isArray(salesTrend)) {
+      salesTrend = [];
+    }
+
+    // Log sales trend data for debugging
+    console.log('Sales trend data:', {
+      count: salesTrend.length,
+      sample: salesTrend.slice(0, 3),
+      groupBy,
+      period
+    });
+
     const responseData = {
       summary: {
         totalSales: salesSummary._count.id,
@@ -283,12 +354,16 @@ export const getSalesReport = async (req: AuthRequest, res: Response) => {
         totalTax: salesSummary._sum.taxAmount || 0,
         totalDiscount: salesSummary._sum.discountAmount || 0
       },
-      salesByPaymentMethod,
-      topProducts: topProductsWithDetails,
-      salesTrend: salesTrend || []
+      salesByPaymentMethod: salesByPaymentMethod || [],
+      topProducts: topProductsWithDetails || [],
+      salesTrend: salesTrend
     };
 
-    console.log('Sales report response:', responseData);
+    console.log('Sales report response:', {
+      summary: responseData.summary,
+      salesTrendCount: responseData.salesTrend.length,
+      topProductsCount: responseData.topProducts.length
+    });
 
     return res.json({
       success: true,

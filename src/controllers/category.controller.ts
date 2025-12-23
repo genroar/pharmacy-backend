@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -22,6 +23,9 @@ const updateCategorySchema = Joi.object({
 
 export const getCategories = async (req: AuthRequest, res: Response) => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await pullLatestFromLive('category').catch(err => console.log('[Sync] Pull categories:', err.message));
+
     const prisma = await getPrisma();
     const { page = 1, limit = 50, search = '', branchId = '' } = req.query;
 
@@ -399,6 +403,11 @@ export const createCategory = async (req: AuthRequest, res: Response) => {
       companyId: category.companyId
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('category', 'create', category).catch(err => {
+      console.error('[Sync] Category create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: category
@@ -475,6 +484,11 @@ export const updateCategory = async (req: AuthRequest, res: Response) => {
       data: updateData
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('category', 'update', category).catch(err => {
+      console.error('[Sync] Category update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: category
@@ -521,6 +535,11 @@ export const deleteCategory = async (req: Request, res: Response) => {
 
     await prisma.category.delete({
       where: { id }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('category', 'delete', { id }).catch(err => {
+      console.error('[Sync] Category delete sync failed:', err.message);
     });
 
     return res.json({

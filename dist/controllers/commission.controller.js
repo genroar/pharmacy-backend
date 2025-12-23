@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getEmployeePerformance = exports.getCommissionStats = exports.updateCommission = exports.getCommission = exports.getCommissions = exports.calculateCommission = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const calculateCommissionSchema = joi_1.default.object({
     employeeId: joi_1.default.string().required(),
@@ -150,6 +151,9 @@ const calculateCommission = async (req, res) => {
                     }
                 }
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('commission', 'create', commission).catch(err => {
+            console.error('[Sync] Commission create sync failed:', err.message);
         });
         return res.status(201).json({
             success: true,
@@ -330,6 +334,9 @@ const updateCommission = async (req, res) => {
                     }
                 }
             }
+        });
+        (0, sync_helper_1.syncAfterOperation)('commission', 'update', commission).catch(err => {
+            console.error('[Sync] Commission update sync failed:', err.message);
         });
         return res.json({
             success: true,

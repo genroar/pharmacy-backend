@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Helper function to serialize BigInt and Date values
@@ -643,6 +644,11 @@ export const createBatch = async (req: any, res: Response) => {
       },
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('batch', 'create', batch).catch(err => {
+      console.error('[Sync] Batch create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: batch,
@@ -736,6 +742,11 @@ export const updateBatch = async (req: any, res: Response) => {
           },
         },
       },
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('batch', 'update', batch).catch(err => {
+      console.error('[Sync] Batch update sync failed:', err.message);
     });
 
     return res.json({
@@ -845,6 +856,11 @@ export const deleteBatch = async (req: any, res: Response) => {
 
     await prisma.batch.delete({
       where: { id },
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('batch', 'delete', { id }).catch(err => {
+      console.error('[Sync] Batch delete sync failed:', err.message);
     });
 
     return res.json({

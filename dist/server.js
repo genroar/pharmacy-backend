@@ -41,31 +41,10 @@ require('./config/database-url-init.js');
 require("./config/database.init");
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
-const fs = __importStar(require("fs"));
-if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.startsWith('file:')) {
-    const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
-    const sqliteDir = path.dirname(sqlitePath);
-    if (!fs.existsSync(sqliteDir)) {
-        try {
-            fs.mkdirSync(sqliteDir, { recursive: true });
-        }
-        catch (err) {
-            console.warn('[Server] Could not create SQLite directory:', err);
-        }
-    }
-    const sqliteUrl = `file:${sqlitePath}`;
-    process.env.DATABASE_URL = sqliteUrl;
-    Object.defineProperty(process.env, 'DATABASE_URL', {
-        value: sqliteUrl,
-        writable: true,
-        enumerable: true,
-        configurable: true
-    });
-    console.log('[Server] ✅ Set DATABASE_URL synchronously before PrismaClient import:', process.env.DATABASE_URL);
-}
 if (!process.env.DATABASE_URL) {
     throw new Error('DATABASE_URL is not set! This should have been set by database.init.ts');
 }
+console.log('[Server] ✅ Database mode:', process.env.USE_POSTGRESQL === 'true' ? 'PostgreSQL (Web)' : 'SQLite (Electron)');
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
@@ -104,6 +83,7 @@ const sync_routes_1 = __importDefault(require("./routes/sync.routes"));
 const database_service_1 = require("./services/database.service");
 const sync_service_1 = require("./services/sync.service");
 const db_util_1 = require("./utils/db.util");
+const db_initializer_1 = require("./utils/db-initializer");
 const error_middleware_1 = require("./middleware/error.middleware");
 const notFound_middleware_1 = require("./middleware/notFound.middleware");
 const app = (0, express_1.default)();
@@ -123,7 +103,85 @@ try {
             }
             console.log(`[Database] Initial connectivity: ${status}`);
             console.log(`[Database] Current database type: ${dbService.getCurrentType()}`);
+            const isPostgreSQLMode = dbService.getCurrentType() === database_service_1.DatabaseType.POSTGRESQL;
+            if (!isPostgreSQLMode) {
+                console.log('[Server] 🔍 Checking SQLite database initialization...');
+                (0, db_initializer_1.isDatabaseInitialized)().then(isInitialized => {
+                    if (!isInitialized) {
+                        console.log('[Server] 📋 SQLite database not initialized - initializing now...');
+                        (0, db_initializer_1.initializeSQLiteDatabase)().then(initResult => {
+                            if (initResult.success) {
+                                console.log('[Server] ✅ SQLite database initialized successfully');
+                                if (initResult.created) {
+                                    console.log('[Server] 📁 New database file created');
+                                }
+                                if (initResult.schemaApplied) {
+                                    console.log('[Server] 📋 Database schema applied');
+                                }
+                            }
+                            else {
+                                console.error('[Server] ❌ SQLite database initialization failed:', initResult.error);
+                                console.error('[Server] ⚠️ Some features may not work properly');
+                            }
+                        }).catch(err => {
+                            console.error('[Server] ❌ Database initialization error:', err.message);
+                        });
+                    }
+                    else {
+                        console.log('[Server] ✅ SQLite database already initialized');
+                    }
+                }).catch(err => {
+                    console.error('[Server] ❌ Database check error:', err.message);
+                });
+            }
+            if (syncService) {
+                console.log('[Sync] 🔍 Initializing database sync...');
+                syncService.initializeDatabase().then(initialized => {
+                    if (!initialized) {
+                        console.error('[Sync] ⚠️ Database initialization had issues - some features may not work offline');
+                    }
+                    if (status === 'online' && syncService) {
+                        console.log('[Sync] 🔄 Syncing users from PostgreSQL...');
+                        syncService.syncUsersFromPostgreSQL().then(result => {
+                            console.log(`[Sync] ✅ User sync: ${result.synced} users synced`);
+                            if (result.errors.length > 0) {
+                                console.log(`[Sync] ⚠️ User sync errors: ${result.errors.length}`);
+                            }
+                        }).catch(err => {
+                            console.error('[Sync] ❌ User sync failed:', err.message);
+                        });
+                        console.log('[Sync] 🔄 Starting incremental sync of all tables...');
+                        syncService.syncAllTablesFromPostgreSQL().then(result => {
+                            console.log(`[Sync] ✅ Sync complete: ${result.synced} records synced, ${result.failed} failed`);
+                            if (result.errors.length > 0) {
+                                console.log(`[Sync] ⚠️ Sync errors: ${result.errors.slice(0, 3).join(', ')}`);
+                            }
+                        }).catch(err => {
+                            console.error('[Sync] ❌ Sync failed:', err.message);
+                        });
+                    }
+                }).catch(err => {
+                    console.error('[Sync] ❌ Database initialization failed:', err.message);
+                });
+            }
             dbService.startConnectivityMonitoring(120000);
+            setInterval(async () => {
+                if (syncService && dbService && dbService.getConnectionStatus() === 'online') {
+                    console.log('[Sync] 🔄 Running periodic BIDIRECTIONAL sync (backup)...');
+                    syncService.bidirectionalSync().catch(err => {
+                    });
+                }
+            }, 300000);
+            setInterval(async () => {
+                if (syncService && dbService) {
+                    const pgAvailable = await dbService.checkPostgreSQLConnectivity();
+                    if (pgAvailable && dbService.getConnectionStatus() === 'online') {
+                        syncService.syncUsersFromPostgreSQL().catch(err => {
+                        });
+                    }
+                }
+            }, 15000);
+            let previousPgAvailable = false;
             let previousStatus = String(status);
             let previousType = dbService.getCurrentType();
             setInterval(async () => {
@@ -132,47 +190,57 @@ try {
                 }
                 const currentStatus = String(dbService.getConnectionStatus());
                 const currentType = dbService.getCurrentType();
+                const pgAvailable = await dbService.checkPostgreSQLConnectivity();
+                if (!previousPgAvailable && pgAvailable) {
+                    console.log('[Sync] 🌐 PostgreSQL is now ONLINE! Syncing SQLite → PostgreSQL...');
+                    syncService.syncToPostgreSQL().catch(err => {
+                        console.error('[Sync] Auto-sync to PostgreSQL failed:', err);
+                    });
+                    syncService.syncUsersFromPostgreSQL().catch(err => {
+                        console.error('[Sync] User sync failed:', err);
+                    });
+                }
+                if (previousPgAvailable && !pgAvailable) {
+                    console.log('[Sync] 📴 PostgreSQL is now OFFLINE - Using SQLite only');
+                    syncService.syncToSQLite().catch(err => {
+                        console.error('[Sync] Auto-sync to SQLite failed:', err);
+                    });
+                }
                 if (previousStatus === 'offline' && currentStatus === 'online') {
-                    console.log('[Sync] 🔄 Connection restored, syncing SQLite → PostgreSQL...');
-                    syncService.syncToPostgreSQL().catch(err => {
-                        console.error('[Sync] Auto-sync failed:', err);
-                    });
+                    console.log('[Sync] 🔄 Local DB connection restored');
+                    if (pgAvailable) {
+                        syncService.bidirectionalSync().catch(err => {
+                            console.error('[Sync] Auto-sync failed:', err);
+                        });
+                    }
                 }
-                if (previousStatus === 'online' && currentStatus === 'offline') {
-                    console.log('[Sync] 🔄 Going offline, syncing PostgreSQL → SQLite to keep data up-to-date...');
-                    syncService.syncToSQLite().catch(err => {
-                        console.error('[Sync] Auto-sync to SQLite failed:', err);
-                    });
+                previousPgAvailable = pgAvailable;
+                previousStatus = currentStatus;
+                previousType = currentType;
+            }, 15000);
+            setInterval(async () => {
+                if (!dbService || !syncService) {
+                    return;
                 }
-                if (previousType === 'sqlite' && currentType === 'postgresql' && currentStatus === 'online') {
-                    console.log('[Sync] 🔄 Database switched to PostgreSQL, syncing changes...');
-                    syncService.syncToPostgreSQL().catch(err => {
-                        console.error('[Sync] Auto-sync failed:', err);
-                    });
-                }
-                if (previousType === 'postgresql' && currentType === 'sqlite') {
-                    console.log('[Sync] 🔄 Database switched to SQLite, syncing PostgreSQL → SQLite to keep data up-to-date...');
-                    syncService.syncToSQLite().catch(err => {
-                        console.error('[Sync] Auto-sync to SQLite failed:', err);
-                    });
-                }
+                const currentStatus = String(dbService.getConnectionStatus());
+                const currentType = dbService.getCurrentType();
                 if (currentStatus === 'online' && currentType === 'postgresql') {
                     const now = new Date();
                     const lastSync = syncService.getStatus().lastSync;
-                    const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-                    if (!lastSync || new Date(lastSync) < fiveMinutesAgo) {
-                        console.log('[Sync] 🔄 Periodic sync: Ensuring both databases are in sync...');
+                    const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+                    if (!lastSync || new Date(lastSync) < tenMinutesAgo) {
+                        console.log('[Sync] 🔄 Safety net sync: Ensuring both databases are in sync...');
                         syncService.syncToPostgreSQL().catch(err => {
-                            console.error('[Sync] Periodic sync to PostgreSQL failed:', err);
+                            console.error('[Sync] Safety net sync to PostgreSQL failed:', err);
                         });
                         syncService.syncToSQLite().catch(err => {
-                            console.error('[Sync] Periodic sync to SQLite failed:', err);
+                            console.error('[Sync] Safety net sync to SQLite failed:', err);
                         });
                     }
                 }
                 previousStatus = currentStatus;
                 previousType = currentType;
-            }, 120000);
+            }, 600000);
         }).catch(err => {
             console.error('[Database] Failed to initialize database service:', err);
         });

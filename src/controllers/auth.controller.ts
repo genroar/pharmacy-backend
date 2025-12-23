@@ -1,3 +1,4 @@
+
 // CRITICAL: Import database initialization FIRST to ensure DATABASE_URL is set
 // This prevents Prisma schema validation errors when PrismaClient is imported
 import '../config/database.init';
@@ -10,13 +11,13 @@ import { PrismaClient } from '@prisma/client';
 import { LoginData, CreateUserData } from '../models/user.model';
 import { validate } from '../middleware/validation.middleware';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Generate unique session token
 const generateSessionToken = (): string => {
   return crypto.randomBytes(32).toString('hex');
 };
-
 // Validation schemas
 const loginSchema = Joi.object({
   usernameOrEmail: Joi.string().required(),
@@ -63,23 +64,186 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     console.log('🔍 Login attempt - Username/Email:', usernameOrEmail);
 
     // Get database client (works with SQLite or PostgreSQL)
-    const prisma = await getPrisma();
+    let prisma;
+    try {
+      prisma = await getPrisma();
+    } catch (dbError: any) {
+      console.error('[Auth] ❌ Database connection failed:', dbError.message);
 
-    // Find user by username or email (check both active and inactive users)
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: usernameOrEmail },
-          { email: usernameOrEmail }
-        ]
-      },
-      include: {
-        branch: true
+      // Check if this is a first-time install (SQLite not initialized)
+      const { isDatabaseInitialized } = await import('../utils/db-initializer');
+      const isInitialized = await isDatabaseInitialized().catch(() => false);
+
+      if (!isInitialized) {
+        console.log('[Auth] ⚠️ Database not initialized - this appears to be first-time install');
+
+        // Try to initialize database now
+        try {
+          const { initializeSQLiteDatabase } = await import('../utils/db-initializer');
+          const initResult = await initializeSQLiteDatabase();
+
+          if (initResult.success) {
+            console.log('[Auth] ✅ Database initialized successfully - retrying login...');
+            // Retry getting Prisma client
+            prisma = await getPrisma();
+            // Continue with login flow below
+          } else {
+            res.status(503).json({
+              success: false,
+              message: 'Database initialization failed. Please restart the application.',
+              code: 'DATABASE_INIT_FAILED',
+              error: initResult.error,
+              requiresRestart: true
+            });
+            return;
+          }
+        } catch (initError: any) {
+          console.error('[Auth] ❌ Database initialization error:', initError.message);
+          res.status(503).json({
+            success: false,
+            message: 'Database not initialized. Please restart the application to complete setup.',
+            code: 'DATABASE_NOT_INITIALIZED',
+            error: initError.message,
+            requiresRestart: true
+          });
+          return;
+        }
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Database connection failed. Please try again or contact support.',
+          code: 'DATABASE_CONNECTION_ERROR',
+          error: dbError.message
+        });
+        return;
       }
-    });
+    }
+
+    // CRITICAL: For first-time login, require internet connection
+    // Check if this is first-time (no users in SQLite) and require PostgreSQL
+    const isSQLite = process.env.DATABASE_URL?.startsWith('file:');
+    let userCount = 0;
+
+    if (isSQLite) {
+      try {
+        userCount = await prisma.user.count();
+        console.log('[Auth] 📊 Current user count in SQLite:', userCount);
+      } catch (countError: any) {
+        console.error('[Auth] ⚠️ Could not count users:', countError.message);
+      }
+    }
+
+    // CRITICAL: Sync users from PostgreSQL BEFORE login check
+    // This ensures SQLite has latest isActive status from PostgreSQL
+    const { getSyncService } = await import('../services/sync.service');
+    const syncService = getSyncService();
+    const { getDatabaseService } = await import('../services/database.service');
+    const dbService = getDatabaseService();
+
+    // Check if PostgreSQL is available
+    const pgAvailable = await dbService.checkPostgreSQLConnectivity();
+
+    // FIRST-TIME LOGIN: Require internet if no users exist
+    if (isSQLite && userCount === 0 && !pgAvailable) {
+      console.log('[Auth] ❌ First-time login requires internet connection');
+      res.status(503).json({
+        success: false,
+        message: 'Internet connection required for first-time login. Please connect to the internet and try again.',
+        code: 'FIRST_LOGIN_REQUIRES_INTERNET',
+        requiresInternet: true
+      });
+      return;
+    }
+
+    if (pgAvailable) {
+      console.log('[Auth] 🔄 Syncing users from PostgreSQL before login...');
+      try {
+        await syncService.syncUsersFromPostgreSQL();
+        console.log('[Auth] ✅ User sync completed');
+      } catch (syncErr: any) {
+        console.log('[Auth] ⚠️ User sync warning:', syncErr.message);
+        // Continue with login even if sync fails (might be partial data)
+      }
+    } else if (isSQLite && userCount === 0) {
+      // This shouldn't happen due to check above, but double-check
+      console.log('[Auth] ❌ No users in database and PostgreSQL unavailable');
+      res.status(503).json({
+        success: false,
+        message: 'Internet connection required for first-time login.',
+        code: 'FIRST_LOGIN_REQUIRES_INTERNET',
+        requiresInternet: true
+      });
+      return;
+    } else {
+      console.log('[Auth] ℹ️ PostgreSQL unavailable - using local SQLite data only');
+    }
+
+    // Normalize input for case-insensitive search
+    const normalizedInput = usernameOrEmail.toLowerCase().trim();
+    console.log('[Auth] Normalized input:', normalizedInput);
+
+    // Find user by username or email (case-insensitive)
+    // SQLite doesn't support case-insensitive queries natively, so we need to handle it
+
+    let user;
+    if (isSQLite) {
+      // For SQLite: Get all users and filter in memory (case-insensitive)
+      const allUsers = await prisma.user.findMany({
+        include: {
+          branch: true
+        }
+      });
+
+      user = allUsers.find(u =>
+        u.email.toLowerCase() === normalizedInput ||
+        u.username.toLowerCase() === normalizedInput
+      );
+
+      if (user) {
+        console.log('[Auth] ✅ User found in SQLite:', user.email, 'isActive:', user.isActive);
+      }
+    } else {
+      // For PostgreSQL: Use raw query for case-insensitive search
+      try {
+        const users = await prisma.$queryRaw<any[]>`
+          SELECT * FROM users
+          WHERE LOWER(email) = LOWER(${usernameOrEmail})
+             OR LOWER(username) = LOWER(${usernameOrEmail})
+          LIMIT 1
+        `;
+
+        if (users && users.length > 0) {
+          const userId = users[0].id;
+          user = await prisma.user.findUnique({
+            where: { id: userId },
+            include: {
+              branch: true
+            }
+          });
+        }
+
+        if (user) {
+          console.log('[Auth] ✅ User found in PostgreSQL:', user.email, 'isActive:', user.isActive);
+        }
+      } catch (pgError: any) {
+        // Fallback to regular query if raw query fails
+        console.log('[Auth] Raw query failed, using regular query:', pgError.message);
+        const allUsers = await prisma.user.findMany({
+          include: {
+            branch: true
+          }
+        });
+
+        user = allUsers.find(u =>
+          u.email.toLowerCase() === normalizedInput ||
+          u.username.toLowerCase() === normalizedInput
+        );
+      }
+    }
 
     if (!user) {
       console.log('❌ User not found for username/email:', usernameOrEmail);
+      console.log('[Auth] Searched in:', isSQLite ? 'SQLite' : 'PostgreSQL');
       res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -88,36 +252,100 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Check if user account is active
-    // In offline/SQLite mode, allow login even if account is not "officially" activated
-    // This is for local installations where there's no SuperAdmin to activate accounts
-    const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
-
-    if (!user.isActive && !isOfflineMode) {
-      console.log('❌ User account is disabled:', usernameOrEmail);
+    // ALL users MUST be activated by SuperAdmin before they can login
+    // This applies to both online (PostgreSQL) and offline (SQLite) modes
+    if (!user.isActive) {
+      console.log('❌ User account is not activated:', usernameOrEmail);
       res.status(403).json({
         success: false,
-        message: 'Account is disabled. Please contact support at +923107100663 to activate your account.',
-        accountDisabled: true
+        message: 'Your account is not activated yet. Please contact SuperAdmin at +923107100663 to activate your account.',
+        accountDisabled: true,
+        pendingActivation: true
       });
       return;
     }
 
-    // In offline mode, auto-activate the user on first login
-    if (!user.isActive && isOfflineMode) {
-      console.log('🔓 Offline mode: Auto-activating user account:', usernameOrEmail);
-      const prisma = await getPrisma();
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { isActive: true }
+    // Check password
+    console.log('[Auth] 🔐 Checking password for user:', user.email);
+    console.log('[Auth] Password hash exists:', !!user.password);
+    console.log('[Auth] Password hash length:', user.password?.length || 0);
+
+    // Validate that user has a password hash
+    if (!user.password) {
+      console.error('[Auth] ❌ User has no password hash:', user.email);
+      res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
       });
-      user.isActive = true;
+      return;
     }
 
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    console.log('🔐 Password check - Valid:', isPasswordValid);
+    let isPasswordValid = false;
+    try {
+      isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log('[Auth] 🔐 Password check - Valid:', isPasswordValid);
+    } catch (bcryptError: any) {
+      console.error('[Auth] ❌ Bcrypt comparison error:', bcryptError.message);
+      console.error('[Auth] ❌ Bcrypt error stack:', bcryptError.stack);
+      res.status(500).json({
+        success: false,
+        message: 'Error validating password. Please try again.',
+        code: 'PASSWORD_VALIDATION_ERROR',
+        ...(process.env.NODE_ENV === 'development' && { details: bcryptError.message })
+      });
+      return;
+    }
+
+    // If password is invalid and we're in SQLite mode, try syncing user again from PostgreSQL
+    if (!isPasswordValid && isSQLite) {
+      try {
+        const { getSyncService } = await import('../services/sync.service');
+        const syncService = getSyncService();
+        const { getDatabaseService } = await import('../services/database.service');
+        const dbService = getDatabaseService();
+
+        const pgAvailable = await dbService.checkPostgreSQLConnectivity();
+        if (pgAvailable) {
+          console.log('[Auth] 🔄 Password mismatch - re-syncing user from PostgreSQL...');
+          await syncService.syncUsersFromPostgreSQL().catch(err => {
+            console.log('[Auth] Re-sync warning:', err.message);
+          });
+
+          // Get user again after sync to get updated password
+          const allUsers = await prisma.user.findMany({
+            include: {
+              branch: true
+            }
+          });
+
+          const syncedUser = allUsers.find(u =>
+            u.email.toLowerCase() === normalizedInput ||
+            u.username.toLowerCase() === normalizedInput
+          );
+
+          if (syncedUser && syncedUser.password) {
+            console.log('[Auth] 🔄 Retrying password check after sync...');
+            try {
+            isPasswordValid = await bcrypt.compare(password, syncedUser.password);
+            if (isPasswordValid) {
+              console.log('[Auth] ✅ Password valid after re-sync!');
+              user = syncedUser; // Update user object with synced data
+              }
+            } catch (bcryptError: any) {
+              console.error('[Auth] ❌ Bcrypt comparison error after sync:', bcryptError.message);
+            }
+          }
+        }
+      } catch (syncErr: any) {
+        console.log('[Auth] Re-sync failed:', syncErr.message);
+      }
+    }
+
     if (!isPasswordValid) {
       console.log('❌ Invalid password for user:', usernameOrEmail);
+      console.log('[Auth] User ID:', user.id);
+      console.log('[Auth] User email:', user.email);
+      console.log('[Auth] User username:', user.username);
       res.status(401).json({
         success: false,
         message: 'Invalid credentials'
@@ -138,7 +366,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     });
 
     // Generate JWT token with session token included
+    console.log('[Auth] 🔑 Checking JWT_SECRET:', process.env.JWT_SECRET ? 'Present' : 'Missing');
     if (!process.env.JWT_SECRET) {
+      console.error('[Auth] ❌ JWT_SECRET is not defined in process.env');
+      console.error('[Auth] ❌ Available env vars:', Object.keys(process.env).filter(k => k.includes('JWT')));
       throw new Error('JWT_SECRET is not defined');
     }
 
@@ -173,11 +404,43 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         token
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Login error:', error);
+    console.error('Login error stack:', error.stack);
+    console.error('Login error details:', {
+      message: error.message,
+      name: error.name,
+      code: error.code,
+      cause: error.cause
+    });
+
+    // Provide more specific error messages
+    let errorMessage = 'Internal server error';
+    let errorCode = 'INTERNAL_ERROR';
+
+    if (error.message?.includes('database') || error.message?.includes('SQLite')) {
+      errorMessage = 'Database connection error. Please restart the application.';
+      errorCode = 'DATABASE_ERROR';
+    } else if (error.message?.includes('Prisma')) {
+      errorMessage = 'Database initialization error. Please restart the application.';
+      errorCode = 'PRISMA_ERROR';
+    } else if (error.message?.includes('bcrypt') || error.message?.includes('password')) {
+      errorMessage = 'Error validating password. Please try again.';
+      errorCode = 'PASSWORD_VALIDATION_ERROR';
+    } else if (error.message?.includes('JWT_SECRET')) {
+      errorMessage = 'Server configuration error. Please contact support.';
+      errorCode = 'CONFIGURATION_ERROR';
+    }
+
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: errorMessage,
+      code: errorCode,
+      ...(process.env.NODE_ENV === 'development' && {
+        details: error.message,
+        stack: error.stack,
+        name: error.name
+      })
     });
   }
 };
@@ -235,15 +498,13 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_ROUNDS || '12'));
 
-    // Check if we're in offline/SQLite mode
-    // In offline mode, users are created as ACTIVE (no SuperAdmin needed)
-    const isOfflineMode = process.env.DATABASE_URL?.startsWith('file:') || false;
-    const shouldBeActive = isOfflineMode; // Auto-activate in offline mode
+    // ALL new users are created as INACTIVE
+    // They MUST be activated by SuperAdmin before they can login
+    // This applies to both online (PostgreSQL) and offline (SQLite) modes
+    const shouldBeActive = false; // Always inactive - SuperAdmin must activate
 
     // For ADMIN and SUPERADMIN users, create user without branch/company initially
     // They will create companies and branches from the dashboard
-    // In offline mode: Account is ACTIVE immediately
-    // In online mode: Account needs activation by SuperAdmin
     if (role === 'ADMIN' || role === 'SUPERADMIN') {
       user = await prisma.user.create({
         data: {
@@ -254,7 +515,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: null, // No branch initially
           companyId: null, // No company initially
-          isActive: shouldBeActive, // Active in offline mode, inactive in online mode
+          isActive: shouldBeActive, // ALWAYS inactive - SuperAdmin must activate
           createdBy: null // Will be updated to self-reference after user creation
         }
       });
@@ -288,8 +549,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       }
 
       // Create user with branch assignment
-      // In offline mode: Account is ACTIVE immediately
-      // In online mode: Account needs activation by SuperAdmin
+      // ALWAYS inactive - SuperAdmin must activate
       user = await prisma.user.create({
         data: {
           username,
@@ -299,7 +559,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
           role,
           branchId: processedBranchId,
           companyId: branch.companyId,
-          isActive: shouldBeActive, // Active in offline mode, inactive in online mode
+          isActive: shouldBeActive, // ALWAYS inactive - SuperAdmin must activate
           createdBy: null // Will be set by the admin who creates this user
         },
         include: {
@@ -309,71 +569,30 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       });
     }
 
-    // Handle response based on mode
-    if (shouldBeActive) {
-      // OFFLINE MODE: User is active, generate token for immediate login
-      console.log('✅ Account created and activated (offline mode):', username);
+    // ALL users need SuperAdmin activation - no auto-login
+    console.log('✅ Account created (pending SuperAdmin activation):', username);
 
-      // Generate session token for immediate login
-      const sessionToken = crypto.randomBytes(32).toString('hex');
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'create', user).catch(err => {
+      console.error('[Sync] User registration sync failed:', err.message);
+    });
 
-      // Update user with session token
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { sessionToken, lastLoginAt: new Date() }
-      });
-
-      // Generate JWT token
-      const token = (jwt.sign as any)(
-        {
-          userId: user.id,
+    res.status(201).json({
+      success: true,
+      pendingActivation: true, // Flag for frontend to show activation required message
+      message: 'Account created successfully! Please contact SuperAdmin at +923107100663 to activate your account before you can login.',
+      data: {
+        user: {
+          id: user.id,
           username: user.username,
+          name: user.name,
           role: user.role,
-          branchId: user.branchId,
-          createdBy: user.createdBy,
-          sessionToken
-        },
-        process.env.JWT_SECRET!,
-        { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-      );
-
-      res.status(201).json({
-        success: true,
-        pendingActivation: false,
-        message: 'Account created successfully! You can now login.',
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            name: user.name,
-            role: user.role,
-            isActive: true,
-            email: user.email
-          },
-          token // Include token for immediate login in offline mode
+          isActive: false, // ALWAYS false - SuperAdmin must activate
+          email: user.email
         }
-      });
-    } else {
-      // ONLINE MODE: User needs activation, no token
-      console.log('✅ Account created (pending activation):', username);
-
-      res.status(201).json({
-        success: true,
-        pendingActivation: true, // Flag for frontend to show special message
-        message: 'Account created successfully! Please contact SuperAdmin to activate your account before you can login.',
-        data: {
-          user: {
-            id: user.id,
-            username: user.username,
-            name: user.name,
-            role: user.role,
-            isActive: user.isActive, // Will be false
-            email: user.email
-          }
-          // NO token - user cannot login until activated
-        }
-      });
-    }
+        // NO token - user cannot login until SuperAdmin activates their account
+      }
+    });
   } catch (error) {
     console.error('Register error:', error);
     console.error('Error details:', {
@@ -543,6 +762,11 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'update', updatedUser).catch(err => {
+      console.error('[Sync] Profile update sync failed:', err.message);
+    });
+
     res.json({
       success: true,
       message: 'Profile updated successfully',
@@ -560,6 +784,216 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Forgot Password - Request password reset
+ * Since this is a business app, we don't send emails
+ * Instead, we log the request and provide SuperAdmin contact info
+ */
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+      return;
+    }
+
+    // Get database client
+    const prisma = await getPrisma();
+
+    // Check if user exists (but don't reveal this to prevent email enumeration)
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (user) {
+      console.log(`🔐 Forgot password request for user: ${email} (ID: ${user.id})`);
+    } else {
+      console.log(`🔐 Forgot password request for unknown email: ${email}`);
+    }
+
+    // Always return success to prevent email enumeration attacks
+    res.json({
+      success: true,
+      message: 'If an account with that email exists, we have logged your password reset request. Please contact SuperAdmin for assistance.',
+      contactNumber: '+923107100663'
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Reset Password - Admin/SuperAdmin can reset any user's password
+ * Requires authentication and SUPERADMIN or ADMIN role
+ */
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userId, newPassword } = req.body;
+    const requestingUser = (req as any).user;
+
+    // Check if requesting user is SUPERADMIN or ADMIN
+    if (!requestingUser || (requestingUser.role !== 'SUPERADMIN' && requestingUser.role !== 'ADMIN')) {
+      res.status(403).json({
+        success: false,
+        message: 'Only SuperAdmin or Admin can reset passwords'
+      });
+      return;
+    }
+
+    if (!userId || !newPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'User ID and new password are required'
+      });
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long'
+      });
+      return;
+    }
+
+    // Get database client
+    const prisma = await getPrisma();
+
+    // Check if target user exists
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!targetUser) {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+      return;
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, parseInt(process.env.BCRYPT_ROUNDS || '12'));
+
+    // Update password and clear session token to force re-login
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: hashedPassword,
+        sessionToken: null // Clear session to force re-login
+      }
+    });
+
+    console.log(`🔐 Password reset for user: ${targetUser.email} by ${requestingUser.username}`);
+
+    res.json({
+      success: true,
+      message: `Password has been reset for ${targetUser.name || targetUser.email}`
+    });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+/**
+ * Check account status - used by frontend for periodic status checks
+ * Returns whether the account is still active
+ * If deactivated, frontend should force logout
+ */
+export const checkAccountStatus = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?.userId || (req as any).user?.id;
+
+    if (!userId) {
+      res.status(401).json({
+        success: false,
+        isActive: false,
+        message: 'User not authenticated',
+        shouldLogout: true
+      });
+      return;
+    }
+
+    // Get database client
+    const prisma = await getPrisma();
+
+    // Check user status from database
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        isActive: true,
+        sessionToken: true,
+        username: true
+      }
+    });
+
+    if (!user) {
+      res.status(404).json({
+        success: false,
+        isActive: false,
+        message: 'User not found',
+        shouldLogout: true
+      });
+      return;
+    }
+
+    // Check if session token matches (for single-session enforcement)
+    const requestSessionToken = (req as any).user?.sessionToken;
+    if (requestSessionToken && user.sessionToken !== requestSessionToken) {
+      res.status(401).json({
+        success: false,
+        isActive: false,
+        message: 'Session expired - logged in from another device',
+        shouldLogout: true
+      });
+      return;
+    }
+
+    // If account is deactivated
+    if (!user.isActive) {
+      console.log(`❌ Account deactivated for user: ${user.username}`);
+      res.status(403).json({
+        success: false,
+        isActive: false,
+        message: 'Your account has been deactivated. Please contact SuperAdmin at +923107100663 to reactivate.',
+        shouldLogout: true,
+        accountDeactivated: true
+      });
+      return;
+    }
+
+    // Account is active
+    res.json({
+      success: true,
+      isActive: true,
+      message: 'Account is active',
+      shouldLogout: false
+    });
+  } catch (error) {
+    console.error('Check account status error:', error);
+    // On error, don't force logout - could be temporary issue
+    res.status(500).json({
+      success: false,
+      isActive: true, // Assume active on error to prevent unnecessary logouts
+      message: 'Could not verify account status',
+      shouldLogout: false
     });
   }
 };

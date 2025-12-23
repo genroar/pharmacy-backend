@@ -3,6 +3,7 @@ import { getPrisma } from '../utils/db.util';
 import Joi from 'joi';
 import { notifyUserDeactivation, notifyUserReactivation } from '../routes/sse.routes';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 
 // Validation schemas
 const createAdminSchema = Joi.object({
@@ -454,6 +455,11 @@ export const updateAdmin = async (req: Request, res: Response): Promise<void> =>
         notifyUserReactivation(id);
       }
     }
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('user', 'update', admin).catch(err => {
+      console.error('[Sync] Admin update sync failed:', err.message);
+    });
 
     res.json({
       success: true,

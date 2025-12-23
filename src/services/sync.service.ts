@@ -53,6 +53,218 @@ class SyncService {
   }
 
   /**
+   * Check if SQLite database exists and is valid
+   * Returns true if database needs to be rebuilt
+   */
+  async checkDatabaseHealth(): Promise<{
+    exists: boolean;
+    valid: boolean;
+    needsRebuild: boolean;
+    tableCount: number;
+    userCount: number;
+  }> {
+    const sqlitePath = path.join(os.homedir(), '.zapeera', 'data', 'zapeera.db');
+
+    const result = {
+      exists: false,
+      valid: false,
+      needsRebuild: false,
+      tableCount: 0,
+      userCount: 0
+    };
+
+    // Check if file exists
+    if (!fs.existsSync(sqlitePath)) {
+      console.log('[Sync] ⚠️ SQLite database file not found - needs full rebuild');
+      result.needsRebuild = true;
+      return result;
+    }
+
+    result.exists = true;
+
+    // Check if database is valid and has data
+    try {
+      const dbService = getDatabaseService();
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!sqliteClient) {
+        console.log('[Sync] ⚠️ SQLite client not available - needs rebuild');
+        result.needsRebuild = true;
+        return result;
+      }
+
+      // Check table count
+      const tables = await sqliteClient.$queryRawUnsafe<any[]>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_prisma%'`
+      );
+      result.tableCount = tables.length;
+
+      // Check user count (minimum data validation)
+      const userCount = await sqliteClient.user.count();
+      result.userCount = userCount;
+
+      // Database is valid if it has tables and at least some users
+      if (result.tableCount > 0 && result.userCount > 0) {
+        result.valid = true;
+        console.log(`[Sync] ✅ SQLite database valid: ${result.tableCount} tables, ${result.userCount} users`);
+      } else {
+        console.log(`[Sync] ⚠️ SQLite database empty or incomplete: ${result.tableCount} tables, ${result.userCount} users`);
+        result.needsRebuild = true;
+      }
+
+    } catch (error: any) {
+      console.error('[Sync] ❌ SQLite database check failed:', error.message);
+      result.needsRebuild = true;
+    }
+
+    return result;
+  }
+
+  /**
+   * Full database rebuild from PostgreSQL
+   * Called when SQLite database is missing or corrupted (e.g., after reinstall)
+   */
+  async rebuildDatabaseFromServer(): Promise<{
+    success: boolean;
+    tablesRebuilt: number;
+    recordsSynced: number;
+    errors: string[];
+  }> {
+    const result = {
+      success: false,
+      tablesRebuilt: 0,
+      recordsSynced: 0,
+      errors: [] as string[]
+    };
+
+    console.log('[Sync] 🔄 Starting FULL DATABASE REBUILD from PostgreSQL...');
+    console.log('[Sync] ⚠️ This may take a few minutes for large databases...');
+
+    // Check if PostgreSQL is available
+    const isPostgreSQLMode = process.env.USE_POSTGRESQL === 'true';
+    if (isPostgreSQLMode) {
+      console.log('[Sync] ℹ️ Using PostgreSQL directly - no rebuild needed');
+      result.success = true;
+      return result;
+    }
+
+    try {
+      const dbService = getDatabaseService();
+
+      // Check PostgreSQL connectivity
+      const pgClient = await dbService.getRawPostgreSQLClient();
+      if (!pgClient) {
+        result.errors.push('PostgreSQL not available - cannot rebuild database');
+        console.error('[Sync] ❌ PostgreSQL not available for rebuild');
+        return result;
+      }
+
+      // Ensure SQLite directory exists
+      const sqliteDir = path.join(os.homedir(), '.zapeera', 'data');
+      if (!fs.existsSync(sqliteDir)) {
+        fs.mkdirSync(sqliteDir, { recursive: true });
+        console.log('[Sync] 📁 Created SQLite directory:', sqliteDir);
+      }
+
+      // Run Prisma db push to create schema FIRST (before any sync)
+      console.log('[Sync] 📋 Creating database schema with Prisma...');
+      try {
+        const { execSync } = require('child_process');
+        const sqlitePath = path.join(sqliteDir, 'zapeera.db');
+
+        // Set DATABASE_URL for prisma command
+        const env = {
+          ...process.env,
+          DATABASE_URL: `file:${sqlitePath}`
+        };
+
+        // Run prisma db push to create all tables
+        execSync('npx prisma db push --skip-generate --accept-data-loss', {
+          cwd: path.join(__dirname, '..', '..'),
+          env,
+          stdio: 'pipe',
+          timeout: 60000 // 60 second timeout
+        });
+
+        console.log('[Sync] ✅ Database schema created successfully');
+      } catch (schemaError: any) {
+        console.error('[Sync] ❌ Failed to create schema:', schemaError.message);
+        // Continue anyway - tables might already exist
+      }
+
+      // Reinitialize database service to pick up new schema
+      console.log('[Sync] 🔄 Reinitializing database connection...');
+      await dbService.initialize();
+
+      // Initialize SQLite client (will create database if missing)
+      const sqliteClient = dbService.getSQLiteClient();
+      if (!sqliteClient) {
+        result.errors.push('Failed to initialize SQLite client');
+        console.error('[Sync] ❌ Failed to initialize SQLite client');
+        await pgClient.end();
+        return result;
+      }
+
+      console.log('[Sync] ✅ Database schema ready');
+
+      // First sync users (critical for authentication)
+      console.log('[Sync] 👤 Step 1/2: Syncing users from PostgreSQL...');
+      const userResult = await this.syncUsersFromPostgreSQL();
+      result.recordsSynced += userResult.synced;
+      result.errors.push(...userResult.errors);
+      console.log(`[Sync] ✅ Users synced: ${userResult.synced}`);
+
+      // Then sync all other tables
+      console.log('[Sync] 📊 Step 2/2: Syncing all tables from PostgreSQL...');
+      const tableResult = await this.syncAllTablesFromPostgreSQL();
+      result.recordsSynced += tableResult.synced;
+      result.tablesRebuilt = 27; // All tables
+      result.errors.push(...tableResult.errors);
+      console.log(`[Sync] ✅ Tables synced: ${tableResult.synced} records`);
+
+      result.success = true;
+      console.log('[Sync] 🎉 DATABASE REBUILD COMPLETE!');
+      console.log(`[Sync] 📊 Total records synced: ${result.recordsSynced}`);
+      console.log(`[Sync] ⚠️ Errors: ${result.errors.length}`);
+
+    } catch (error: any) {
+      console.error('[Sync] ❌ Database rebuild failed:', error.message);
+      result.errors.push(error.message);
+    }
+
+    return result;
+  }
+
+  /**
+   * Initialize database on startup
+   * Checks health and rebuilds if needed
+   */
+  async initializeDatabase(): Promise<boolean> {
+    console.log('[Sync] 🔍 Checking database health on startup...');
+
+    // Check database health
+    const health = await this.checkDatabaseHealth();
+
+    if (health.needsRebuild) {
+      console.log('[Sync] ⚠️ Database needs rebuild - starting full sync from server...');
+
+      const rebuildResult = await this.rebuildDatabaseFromServer();
+
+      if (!rebuildResult.success) {
+        console.error('[Sync] ❌ Database rebuild failed - app may not work correctly offline');
+        console.error('[Sync] ⚠️ Please ensure internet connection and restart the app');
+        return false;
+      }
+
+      console.log('[Sync] ✅ Database rebuilt successfully!');
+      return true;
+    }
+
+    console.log('[Sync] ✅ Database health check passed');
+    return true;
+  }
+
+  /**
    * Load sync queue from disk
    */
   private loadQueue(): void {
@@ -129,7 +341,12 @@ class SyncService {
     this.syncStatus.currentOperation = 'Syncing to PostgreSQL';
 
     try {
-      const sqliteClient = await dbService.getSQLiteClient();
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!sqliteClient) {
+        console.log('[Sync] SQLite client not available');
+        return;
+      }
 
       // Use direct pg client for PostgreSQL operations
       const { Client } = require('pg');
@@ -175,6 +392,453 @@ class SyncService {
       this.syncStatus.inProgress = false;
       this.updateStatus();
     }
+  }
+
+  /**
+   * Download users from PostgreSQL to SQLite
+   * This ensures SQLite has the latest user data (including isActive status)
+   */
+  async syncUsersFromPostgreSQL(): Promise<{ synced: number; errors: string[] }> {
+    const result = { synced: 0, errors: [] as string[] };
+
+    // Check if using PostgreSQL directly (website mode)
+    const isPostgreSQLMode = process.env.USE_POSTGRESQL === 'true';
+    if (isPostgreSQLMode) {
+      console.log('[Sync] ℹ️  Using PostgreSQL directly - no sync needed');
+      return result;
+    }
+
+    try {
+      const dbService = getDatabaseService();
+      const pgClient = await dbService.getRawPostgreSQLClient();
+
+      if (!pgClient) {
+        console.log('[Sync] ⚠️ PostgreSQL not available for user sync');
+        return result;
+      }
+
+      console.log('[Sync] ⬇️ Downloading users from PostgreSQL to SQLite...');
+
+      // Get all users from PostgreSQL
+      // First, check which columns exist to handle schema differences
+      const columnCheck = await pgClient.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'users'
+      `);
+      const existingColumns = columnCheck.rows.map((r: any) => r.column_name);
+
+      // Build query with only existing columns
+      const baseColumns = ['id', 'email', 'password', 'name', 'role', 'isActive', 'createdAt', 'updatedAt'];
+      const optionalColumns = ['username', 'branchId', 'companyId', 'createdBy', 'sessionToken', 'lastLoginAt', 'profileImage'];
+
+      const selectColumns = [...baseColumns];
+      for (const col of optionalColumns) {
+        if (existingColumns.includes(col)) {
+          selectColumns.push(col);
+        }
+      }
+
+      const selectClause = selectColumns.map(c => `"${c}"`).join(', ');
+      const pgUsers = await pgClient.query(`SELECT ${selectClause} FROM users`);
+
+      if (pgUsers.rows.length === 0) {
+        console.log('[Sync] No users found in PostgreSQL');
+        await pgClient.end();
+        return result;
+      }
+
+      console.log(`[Sync] Found ${pgUsers.rows.length} users in PostgreSQL`);
+
+      // Get SQLite client
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!sqliteClient) {
+        console.log('[Sync] SQLite client not available');
+        await pgClient.end();
+        return result;
+      }
+
+      // Upsert each user into SQLite
+      for (const pgUser of pgUsers.rows) {
+        try {
+          // Convert PostgreSQL boolean to SQLite integer
+          const isActive = pgUser.isActive === true || pgUser.isActive === 't' || pgUser.isActive === 1;
+
+          // Check if user exists by ID first
+          let existingUser = await sqliteClient.user.findUnique({
+            where: { id: pgUser.id }
+          });
+
+          // Also check by email (in case ID is different but same email)
+          if (!existingUser && pgUser.email) {
+            existingUser = await sqliteClient.user.findUnique({
+              where: { email: pgUser.email }
+            });
+          }
+
+          // Build update data with only available fields
+          // Set branchId and companyId to null if they would cause FK violations
+          const updateData: any = {
+            email: pgUser.email,
+            password: pgUser.password,
+            name: pgUser.name,
+            role: pgUser.role,
+            isActive: isActive,
+            updatedAt: new Date()
+          };
+
+          // Add optional fields if they exist
+          if (pgUser.username) updateData.username = pgUser.username;
+          else updateData.username = pgUser.email; // Fallback to email
+
+          // For branchId and companyId, check if they exist in SQLite first
+          // If not, set to null to avoid FK violations
+          if (pgUser.branchId) {
+            try {
+              const branchExists = await sqliteClient.branch.findUnique({ where: { id: pgUser.branchId } });
+              updateData.branchId = branchExists ? pgUser.branchId : null;
+            } catch {
+              updateData.branchId = null;
+            }
+          } else {
+            updateData.branchId = null;
+          }
+
+          if (pgUser.companyId) {
+            try {
+              const companyExists = await sqliteClient.company.findUnique({ where: { id: pgUser.companyId } });
+              updateData.companyId = companyExists ? pgUser.companyId : null;
+            } catch {
+              updateData.companyId = null;
+            }
+          } else {
+            updateData.companyId = null;
+          }
+
+          if (pgUser.sessionToken !== undefined) updateData.sessionToken = pgUser.sessionToken;
+          if (pgUser.lastLoginAt !== undefined) updateData.lastLoginAt = pgUser.lastLoginAt;
+          if (pgUser.profileImage !== undefined) updateData.profileImage = pgUser.profileImage;
+
+          if (existingUser) {
+            // Update existing user by their actual ID
+            await sqliteClient.user.update({
+              where: { id: existingUser.id },
+              data: updateData
+            });
+            console.log(`[Sync] ✅ Updated user: ${pgUser.email} (isActive: ${isActive})`);
+          } else {
+            // Create new user - need to ensure username is unique
+            let username = pgUser.username || pgUser.email;
+
+            // Check if username already exists
+            const usernameExists = await sqliteClient.user.findFirst({
+              where: { username: username }
+            });
+
+            if (usernameExists) {
+              // Append random suffix to make username unique
+              username = `${username}_${Date.now().toString(36)}`;
+            }
+
+            const createData = {
+              ...updateData,
+              id: pgUser.id,
+              username: username,
+              createdBy: pgUser.createdBy || pgUser.id,
+              createdAt: pgUser.createdAt || new Date()
+            };
+
+            await sqliteClient.user.create({
+              data: createData
+            });
+            console.log(`[Sync] ✅ Created user: ${pgUser.email} (isActive: ${isActive})`);
+          }
+          result.synced++;
+        } catch (userError: any) {
+          // Silent fail for non-critical errors, just log
+          if (!userError.message?.includes('Unique constraint')) {
+            console.error(`[Sync] ❌ Failed to sync user ${pgUser.email}:`, userError.message);
+          }
+          result.errors.push(`${pgUser.email}: ${userError.message}`);
+        }
+      }
+
+      await pgClient.end();
+      console.log(`[Sync] ✅ User sync complete: ${result.synced} synced, ${result.errors.length} errors`);
+      return result;
+    } catch (error: any) {
+      console.error('[Sync] ❌ User sync from PostgreSQL failed:', error.message);
+      result.errors.push(error.message);
+      return result;
+    }
+  }
+
+  /**
+   * Comprehensive sync of ALL 27 tables from PostgreSQL to SQLite
+   * This ensures SQLite has complete data from PostgreSQL
+   */
+  async syncAllTablesFromPostgreSQL(): Promise<{ synced: number; failed: number; errors: string[] }> {
+    const result = { synced: 0, failed: 0, errors: [] as string[] };
+
+    // Check if using PostgreSQL directly (website mode)
+    const isPostgreSQLMode = process.env.USE_POSTGRESQL === 'true';
+    if (isPostgreSQLMode) {
+      console.log('[Sync] ℹ️  Using PostgreSQL directly - no full sync needed');
+      return result;
+    }
+
+    if (this.syncStatus.inProgress) {
+      console.log('[Sync] ⚠️  Sync already in progress');
+      return result;
+    }
+
+    this.syncStatus.inProgress = true;
+    this.syncStatus.currentOperation = 'Full sync from PostgreSQL';
+
+    try {
+      const dbService = getDatabaseService();
+      const pgClient = await dbService.getRawPostgreSQLClient();
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!pgClient) {
+        console.log('[Sync] ⚠️  PostgreSQL not available for full sync');
+        return result;
+      }
+
+      if (!sqliteClient) {
+        console.log('[Sync] ⚠️  SQLite client not available');
+        return result;
+      }
+
+      console.log('[Sync] 🔄 Starting FULL sync of ALL 27 tables from PostgreSQL to SQLite...');
+
+      // Tables in order of dependencies (parents before children)
+      const tablesToSync = [
+        // Core tables (no dependencies)
+        { pg: 'companies', sqlite: 'company' },
+        { pg: 'categories', sqlite: 'category' },
+        { pg: 'suppliers', sqlite: 'supplier' },
+        { pg: 'manufacturers', sqlite: 'manufacturer' },
+        { pg: 'shelves', sqlite: 'shelf' },
+        { pg: 'settings', sqlite: 'settings' },
+        // Users and branches (depend on company)
+        { pg: 'users', sqlite: 'user' },
+        { pg: 'branches', sqlite: 'branch' },
+        { pg: 'employees', sqlite: 'employee' },
+        // Products (depend on category, supplier, manufacturer, shelf)
+        { pg: 'products', sqlite: 'product' },
+        // Batches (depend on product, supplier, manufacturer)
+        { pg: 'batches', sqlite: 'batch' },
+        { pg: 'stock_movements', sqlite: 'stockMovement' },
+        // Customers
+        { pg: 'customers', sqlite: 'customer' },
+        // Sales
+        { pg: 'sales', sqlite: 'sale' },
+        { pg: 'sale_items', sqlite: 'saleItem' },
+        { pg: 'receipts', sqlite: 'receipt' },
+        // Purchases
+        { pg: 'purchases', sqlite: 'purchase' },
+        { pg: 'purchase_items', sqlite: 'purchaseItem' },
+        // Refunds
+        { pg: 'refunds', sqlite: 'refund' },
+        { pg: 'refund_items', sqlite: 'refundItem' },
+        // Employee management
+        { pg: 'attendance', sqlite: 'attendance' },
+        { pg: 'shifts', sqlite: 'shift' },
+        { pg: 'scheduled_shifts', sqlite: 'scheduledShift' },
+        { pg: 'scheduled_shift_users', sqlite: 'scheduledShiftUser' },
+        { pg: 'commissions', sqlite: 'commission' },
+        // Other
+        { pg: 'card_details', sqlite: 'card_details' },
+        { pg: 'subscriptions', sqlite: 'subscriptions' }
+      ];
+
+      // Extra columns to exclude (these were added to PostgreSQL but don't exist in SQLite)
+      const excludeColumns = ['updated_at', 'created_at', 'is_synced', 'synced_at', 'last_modified'];
+
+      for (const table of tablesToSync) {
+        try {
+          this.syncStatus.currentOperation = `Syncing ${table.pg}...`;
+
+          // First get SQLite table columns to know what columns exist
+          let sqliteColumns: string[] = [];
+          try {
+            const tableInfo = await sqliteClient.$queryRawUnsafe<any[]>(`PRAGMA table_info("${table.pg}")`);
+            sqliteColumns = tableInfo.map((col: any) => col.name);
+          } catch (e) {
+            console.log(`[Sync] ⚠️  Cannot get schema for ${table.pg}, skipping`);
+            continue;
+          }
+
+          if (sqliteColumns.length === 0) {
+            console.log(`[Sync] ⚠️  Table ${table.pg} not found in SQLite, skipping`);
+            continue;
+          }
+
+          // Get records from PostgreSQL
+          const pgResult = await pgClient.query(`SELECT * FROM ${table.pg}`);
+          const records = pgResult.rows;
+
+          if (records.length === 0) {
+            console.log(`[Sync] 📋 ${table.pg}: 0 records (empty)`);
+            continue;
+          }
+
+          // Upsert each record to SQLite using Prisma for better compatibility
+          let tableSuccess = 0;
+          let tableFailed = 0;
+          let firstError = '';
+
+          // Get Prisma model for this table
+          const prismaModel = (sqliteClient as any)[table.sqlite];
+
+          for (const record of records) {
+            try {
+              // Clean record for Prisma - convert to camelCase and handle types
+              const cleanData: any = {};
+
+              for (const [key, value] of Object.entries(record)) {
+                // Skip excluded columns
+                if (excludeColumns.includes(key)) continue;
+
+                // Convert snake_case to camelCase
+                const camelKey = this.snakeToCamel(key);
+
+                // Handle value conversion
+                if (value === null || value === undefined) {
+                  cleanData[camelKey] = null;
+                } else if (value === 't' || value === true) {
+                  cleanData[camelKey] = true;
+                } else if (value === 'f' || value === false) {
+                  cleanData[camelKey] = false;
+                } else if (value instanceof Date) {
+                  cleanData[camelKey] = value;
+                } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+                  // ISO date string
+                  cleanData[camelKey] = new Date(value);
+                } else {
+                  cleanData[camelKey] = value;
+                }
+              }
+
+              // Make sure id is set
+              const recordId = cleanData.id;
+              if (!recordId) {
+                tableFailed++;
+                continue;
+              }
+
+              // Remove id from update data
+              const { id, ...updateData } = cleanData;
+
+              // Use explicit check + update/create for proper handling
+              if (prismaModel) {
+                // Check if record exists first
+                const existingRecord = await prismaModel.findUnique({
+                  where: { id: recordId }
+                });
+
+                if (existingRecord) {
+                  // UPDATE existing record with ALL fields from PostgreSQL
+                  await prismaModel.update({
+                    where: { id: recordId },
+                    data: updateData
+                  });
+                } else {
+                  // CREATE new record
+                  await prismaModel.create({
+                    data: cleanData
+                  });
+                }
+                tableSuccess++;
+              } else {
+                // Fallback to raw SQL if model not found
+                const columns = Object.keys(cleanData);
+                const values = Object.values(cleanData).map(v => {
+                  if (v === null || v === undefined) return null;
+                  if (typeof v === 'boolean') return v ? 1 : 0;
+                  if (v instanceof Date) return v.toISOString();
+                  return v;
+                });
+                const placeholders = columns.map(() => '?').join(', ');
+                const columnList = columns.map(c => `"${c}"`).join(', ');
+                const sql = `INSERT OR REPLACE INTO "${table.pg}" (${columnList}) VALUES (${placeholders})`;
+                await sqliteClient.$executeRawUnsafe(sql, ...values);
+                tableSuccess++;
+              }
+
+            } catch (recordError: any) {
+              // Capture first error for debugging
+              if (!firstError) firstError = recordError.message;
+              tableFailed++;
+            }
+          }
+
+          // Log first error if any failed
+          if (firstError && tableFailed > 0) {
+            console.log(`[Sync] ⚠️  ${table.pg} error: ${firstError.substring(0, 80)}...`);
+          }
+
+          console.log(`[Sync] ✅ ${table.pg}: ${tableSuccess} synced, ${tableFailed} failed (${records.length} total)`);
+          result.synced += tableSuccess;
+          result.failed += tableFailed;
+
+        } catch (tableError: any) {
+          // Log table-level errors
+          console.error(`[Sync] ❌ ${table.pg}: ${tableError.message}`);
+          result.errors.push(`${table.pg}: ${tableError.message}`);
+        }
+      }
+
+      await pgClient.end();
+      console.log(`[Sync] 🎉 Full sync complete: ${result.synced} synced, ${result.failed} failed`);
+
+    } catch (error: any) {
+      console.error('[Sync] ❌ Full sync failed:', error.message);
+      result.errors.push(error.message);
+    } finally {
+      this.syncStatus.inProgress = false;
+      this.syncStatus.currentOperation = null;
+      this.updateStatus();
+    }
+
+    return result;
+  }
+
+  /**
+   * Convert snake_case to camelCase
+   */
+  private snakeToCamel(str: string): string {
+    return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+  }
+
+  /**
+   * Clean a record for SQLite/Prisma compatibility
+   * Converts snake_case keys to camelCase
+   */
+  private cleanRecordForSQLite(record: any): any {
+    const cleaned: any = {};
+
+    for (const [key, value] of Object.entries(record)) {
+      // Convert snake_case to camelCase for Prisma
+      const camelKey = this.snakeToCamel(key);
+
+      if (value === null || value === undefined) {
+        cleaned[camelKey] = null;
+      } else if (typeof value === 'boolean' || value === 't' || value === 'f') {
+        // Convert PostgreSQL boolean strings to actual booleans
+        cleaned[camelKey] = value === true || value === 't';
+      } else if (value instanceof Date) {
+        cleaned[camelKey] = value;
+      } else if (typeof value === 'object' && !(value instanceof Date)) {
+        // Skip complex objects that can't be stored directly
+        cleaned[camelKey] = JSON.stringify(value);
+      } else {
+        cleaned[camelKey] = value;
+      }
+    }
+
+    return cleaned;
   }
 
   /**
@@ -282,6 +946,33 @@ class SyncService {
   private async updateInPostgreSQL(client: any, table: string, data: any): Promise<void> {
     if (!data.id) {
       throw new Error('Update requires id');
+    }
+
+    // SPECIAL HANDLING FOR USERS TABLE:
+    // If PostgreSQL already has this user and it's active, don't overwrite isActive from SQLite
+    if (table === 'users' && data.isActive === false) {
+      try {
+        const existingUser = await client.query(
+          'SELECT "isActive" FROM users WHERE id = $1',
+          [data.id]
+        );
+
+        if (existingUser.rows.length > 0) {
+          const pgIsActive = existingUser.rows[0].isActive === true ||
+                            existingUser.rows[0].isActive === 't' ||
+                            existingUser.rows[0].isActive === 1;
+
+          // If PostgreSQL user is active, preserve that status (don't overwrite with SQLite inactive)
+          if (pgIsActive) {
+            console.log(`[Sync] 🔒 Preserving active status for user ${data.id} (PostgreSQL has active, SQLite update has inactive)`);
+            // Remove isActive from update - PostgreSQL status takes priority
+            delete data.isActive;
+          }
+        }
+      } catch (checkError: any) {
+        // If check fails, continue with normal update
+        console.log(`[Sync] ⚠️ Could not check existing user status: ${checkError.message}`);
+      }
     }
 
     const columns = Object.keys(data).filter(key => key !== 'id' && data[key] !== undefined);
@@ -549,12 +1240,43 @@ class SyncService {
 
       // Use raw SQL
       // Get actual column names from PostgreSQL (handles both camelCase and snake_case)
-      const columns = Object.keys(dataToSync).filter(key => dataToSync[key] !== undefined);
-      const values = columns.map(col => dataToSync[col]);
-      const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+      let columns = Object.keys(dataToSync).filter(key => dataToSync[key] !== undefined);
+      let values = columns.map(col => dataToSync[col]);
+
+      // SPECIAL HANDLING FOR USERS TABLE:
+      // If PostgreSQL already has this user and it's active, don't overwrite isActive from SQLite
+      if (tableName === 'users' && dataToSync.isActive === false) {
+        try {
+          const existingUser = await targetClient.query(
+            'SELECT "isActive" FROM users WHERE id = $1',
+            [cleanRecord.id]
+          );
+
+          if (existingUser.rows.length > 0) {
+            const pgIsActive = existingUser.rows[0].isActive === true ||
+                              existingUser.rows[0].isActive === 't' ||
+                              existingUser.rows[0].isActive === 1;
+
+            // If PostgreSQL user is active, preserve that status (don't overwrite with SQLite inactive)
+            if (pgIsActive) {
+              console.log(`[Sync] 🔒 Preserving active status for user ${cleanRecord.id} in upsert (PostgreSQL has active, SQLite has inactive)`);
+              // Remove isActive from dataToSync - PostgreSQL status takes priority
+              delete dataToSync.isActive;
+              // Rebuild columns and values without isActive
+              columns = Object.keys(dataToSync).filter(key => dataToSync[key] !== undefined);
+              values = columns.map(col => dataToSync[col]);
+            }
+          }
+        } catch (checkError: any) {
+          // If check fails, continue with normal upsert
+          console.log(`[Sync] ⚠️ Could not check existing user status in upsert: ${checkError.message}`);
+        }
+      }
 
       // Get actual column names from PostgreSQL table
       const actualColumnNames = await this.getActualColumnNames(targetClient, tableName);
+
+      const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
 
       // Map Prisma field names to actual PostgreSQL column names
       const columnNames = columns.map(col => {
@@ -1234,6 +1956,8 @@ class SyncService {
       'subscriptions', 'card_details', 'attendance', 'shifts', 'commissions'
     ];
 
+    const now = new Date();
+
     for (const key in record) {
       // Skip relation fields (objects/arrays that are not dates)
       if (relationFields.includes(key)) {
@@ -1247,6 +1971,14 @@ class SyncService {
 
       // Keep scalar values and arrays of scalars
       cleaned[key] = record[key];
+    }
+
+    // CRITICAL: Always ensure createdAt and updatedAt have values
+    if (!cleaned.createdAt || cleaned.createdAt === null) {
+      cleaned.createdAt = now;
+    }
+    if (!cleaned.updatedAt || cleaned.updatedAt === null) {
+      cleaned.updatedAt = now;
     }
 
     return cleaned;
@@ -1280,6 +2012,628 @@ class SyncService {
    */
   getQueue(): SyncQueueItem[] {
     return [...this.syncQueue];
+  }
+
+  /**
+   * BIDIRECTIONAL SYNC - Sync all tables both ways
+   * SQLite → PostgreSQL (local changes) AND PostgreSQL → SQLite (live changes)
+   */
+  async bidirectionalSync(): Promise<{
+    localToLive: { synced: number; failed: number };
+    liveToLocal: { synced: number; failed: number };
+    errors: string[];
+  }> {
+    const result = {
+      localToLive: { synced: 0, failed: 0 },
+      liveToLocal: { synced: 0, failed: 0 },
+      errors: [] as string[]
+    };
+
+    if (this.syncStatus.inProgress) {
+      console.log('[Sync] ⏳ Sync already in progress');
+      return result;
+    }
+
+    const dbService = getDatabaseService();
+
+    // Check if online
+    if (dbService.getConnectionStatus() !== 'online') {
+      console.log('[Sync] ⚠️ Offline - cannot sync with live database');
+      return result;
+    }
+
+    console.log('[Sync] 🔄 Starting BIDIRECTIONAL SYNC...');
+    this.syncStatus.inProgress = true;
+    this.syncStatus.currentOperation = 'Bidirectional Sync';
+
+    try {
+      // Step 1: Sync LOCAL (SQLite) → LIVE (PostgreSQL)
+      console.log('[Sync] ➡️ Step 1: Syncing LOCAL → LIVE (SQLite → PostgreSQL)...');
+      const localToLiveResult = await this.syncAllTablesFromSQLiteToPostgreSQL();
+      result.localToLive = { synced: localToLiveResult.synced, failed: localToLiveResult.failed };
+      result.errors.push(...localToLiveResult.errors);
+      console.log(`[Sync] ✅ LOCAL → LIVE: ${localToLiveResult.synced} synced, ${localToLiveResult.failed} failed`);
+
+      // Step 2: Sync LIVE (PostgreSQL) → LOCAL (SQLite)
+      console.log('[Sync] ⬅️ Step 2: Syncing LIVE → LOCAL (PostgreSQL → SQLite)...');
+      const liveToLocalResult = await this.syncAllTablesFromPostgreSQL();
+      result.liveToLocal = { synced: liveToLocalResult.synced, failed: liveToLocalResult.failed };
+      result.errors.push(...liveToLocalResult.errors);
+      console.log(`[Sync] ✅ LIVE → LOCAL: ${liveToLocalResult.synced} synced, ${liveToLocalResult.failed} failed`);
+
+      this.syncStatus.lastSync = new Date();
+      console.log('[Sync] 🎉 BIDIRECTIONAL SYNC COMPLETE!');
+      console.log(`[Sync] 📊 Total: LOCAL→LIVE: ${result.localToLive.synced}, LIVE→LOCAL: ${result.liveToLocal.synced}`);
+
+    } catch (error: any) {
+      console.error('[Sync] ❌ Bidirectional sync failed:', error.message);
+      result.errors.push(error.message);
+    } finally {
+      this.syncStatus.inProgress = false;
+      this.syncStatus.currentOperation = null;
+      this.updateStatus();
+    }
+
+    return result;
+  }
+
+  /**
+   * Sync all tables from SQLite to PostgreSQL
+   * This pushes local changes to the live database
+   */
+  async syncAllTablesFromSQLiteToPostgreSQL(): Promise<{
+    synced: number;
+    failed: number;
+    errors: string[];
+  }> {
+    const result = {
+      synced: 0,
+      failed: 0,
+      errors: [] as string[]
+    };
+
+    const dbService = getDatabaseService();
+    const sqliteClient = dbService.getSQLiteClient();
+    const pgClient = await dbService.getRawPostgreSQLClient();
+
+    if (!sqliteClient || !pgClient) {
+      result.errors.push('Database clients not available');
+      return result;
+    }
+
+    // Table order - dependency order for foreign keys
+    const tables = [
+      { prisma: 'company', pg: 'companies' },
+      { prisma: 'category', pg: 'categories' },
+      { prisma: 'supplier', pg: 'suppliers' },
+      { prisma: 'manufacturer', pg: 'manufacturers' },
+      { prisma: 'shelf', pg: 'shelves' },
+      { prisma: 'settings', pg: 'settings' },
+      { prisma: 'user', pg: 'users' },
+      { prisma: 'branch', pg: 'branches' },
+      { prisma: 'employee', pg: 'employees' },
+      { prisma: 'product', pg: 'products' },
+      { prisma: 'batch', pg: 'batches' },
+      { prisma: 'stockMovement', pg: 'stock_movements' },
+      { prisma: 'customer', pg: 'customers' },
+      { prisma: 'sale', pg: 'sales' },
+      { prisma: 'saleItem', pg: 'sale_items' },
+      { prisma: 'receipt', pg: 'receipts' },
+      { prisma: 'purchase', pg: 'purchases' },
+      { prisma: 'purchaseItem', pg: 'purchase_items' },
+      { prisma: 'refund', pg: 'refunds' },
+      { prisma: 'refundItem', pg: 'refund_items' },
+      { prisma: 'attendance', pg: 'attendance' },
+      { prisma: 'shift', pg: 'shifts' },
+      { prisma: 'scheduledShift', pg: 'scheduled_shifts' },
+      { prisma: 'scheduledShiftUser', pg: 'scheduled_shift_users' },
+      { prisma: 'commission', pg: 'commissions' },
+      { prisma: 'cardDetails', pg: 'card_details' },
+      { prisma: 'subscription', pg: 'subscriptions' }
+    ];
+
+    console.log('[Sync] 🔄 Syncing SQLite → PostgreSQL (27 tables)...');
+
+    try {
+      for (const table of tables) {
+        try {
+          // Get records from SQLite
+          const prismaModel = (sqliteClient as any)[table.prisma];
+          if (!prismaModel) {
+            continue; // Skip if model doesn't exist
+          }
+
+          const records = await prismaModel.findMany();
+
+          if (records.length === 0) {
+            continue; // Skip empty tables
+          }
+
+          // Check if PostgreSQL table exists
+          const tableExists = await this.tableExistsInPostgreSQL(pgClient, table.pg);
+          if (!tableExists) {
+            console.log(`[Sync] ⚠️ Table ${table.pg} not in PostgreSQL, skipping`);
+            continue;
+          }
+
+          // Get PostgreSQL column names
+          const pgColumns = await this.getActualColumnNames(pgClient, table.pg);
+
+          let tableSuccess = 0;
+          let tableFailed = 0;
+
+          for (const record of records) {
+            try {
+              // Clean record for PostgreSQL - removes relation objects
+              const cleanRecord = this.removeRelations(record);
+
+              // CRITICAL: Ensure we have an ID
+              if (!cleanRecord.id) {
+                tableFailed++;
+                continue;
+              }
+
+              // SPECIAL HANDLING FOR USERS TABLE:
+              // If PostgreSQL already has this user and it's active, don't overwrite isActive from SQLite
+              // This prevents inactive SQLite status from overwriting active PostgreSQL status
+              if (table.pg === 'users') {
+                try {
+                  const existingUser = await pgClient.query(
+                    'SELECT "isActive" FROM users WHERE id = $1',
+                    [cleanRecord.id]
+                  );
+
+                  if (existingUser.rows.length > 0) {
+                    const pgIsActive = existingUser.rows[0].isActive === true ||
+                                      existingUser.rows[0].isActive === 't' ||
+                                      existingUser.rows[0].isActive === 1;
+
+                    // If PostgreSQL user is active, preserve that status (don't overwrite with SQLite inactive)
+                    if (pgIsActive && cleanRecord.isActive === false) {
+                      console.log(`[Sync] 🔒 Preserving active status for user ${cleanRecord.id} (PostgreSQL has active, SQLite has inactive)`);
+                      // Remove isActive from update - PostgreSQL status takes priority
+                      delete cleanRecord.isActive;
+                    }
+                  }
+                } catch (checkError: any) {
+                  // If check fails, continue with normal sync
+                  console.log(`[Sync] ⚠️ Could not check existing user status: ${checkError.message}`);
+                }
+              }
+
+              // CRITICAL: Ensure updatedAt and createdAt have valid values
+              const now = new Date().toISOString();
+
+              // Convert date fields to ISO strings if they exist
+              if (cleanRecord.createdAt) {
+                if (cleanRecord.createdAt instanceof Date) {
+                  cleanRecord.createdAt = cleanRecord.createdAt.toISOString();
+                } else if (typeof cleanRecord.createdAt !== 'string') {
+                  cleanRecord.createdAt = now;
+                }
+              } else {
+                cleanRecord.createdAt = now;
+              }
+
+              if (cleanRecord.updatedAt) {
+                if (cleanRecord.updatedAt instanceof Date) {
+                  cleanRecord.updatedAt = cleanRecord.updatedAt.toISOString();
+                } else if (typeof cleanRecord.updatedAt !== 'string') {
+                  cleanRecord.updatedAt = now;
+                }
+              } else {
+                cleanRecord.updatedAt = now;
+              }
+
+              // Build upsert query - include all columns with values
+              const columns = Object.keys(cleanRecord).filter(k => {
+                const value = cleanRecord[k];
+                // Skip undefined
+                if (value === undefined) return false;
+                // Skip null for non-required fields (except FK fields which can be null)
+                if (value === null && !['branchId', 'companyId', 'supplierId', 'manufacturerId', 'categoryId', 'shelfId', 'customerId', 'userId', 'saleId', 'productId', 'batchId'].includes(k)) {
+                  return false;
+                }
+                return true;
+              });
+
+              const values = columns.map(c => cleanRecord[c]);
+
+              // Map column names to PostgreSQL (camelCase → snake_case if needed)
+              const pgColumnNames = columns.map(col => {
+                const snakeCol = this.camelToSnake(col);
+                return pgColumns.includes(snakeCol) ? snakeCol : col;
+              });
+
+              // Convert values for PostgreSQL
+              const pgValues = values.map(v => {
+                if (v === null || v === undefined) return null;
+                if (typeof v === 'boolean') return v;
+                if (v instanceof Date) return v.toISOString();
+                return v;
+              });
+
+              // Build INSERT ON CONFLICT UPDATE query
+              const columnList = pgColumnNames.map(c => `"${c}"`).join(', ');
+              const placeholders = pgColumnNames.map((_, i) => `$${i + 1}`).join(', ');
+
+              // Build update list - always update updatedAt
+              // For users table, exclude isActive if we're preserving PostgreSQL status
+              let updateList = pgColumnNames
+                .filter(c => {
+                  // For users table, skip isActive if it was removed from cleanRecord
+                  if (table.pg === 'users' && c === 'isActive' && !columns.includes('isActive')) {
+                    return false;
+                  }
+                  return c !== 'id' && c !== 'createdAt' && c !== 'created_at';
+                })
+                .map(c => `"${c}" = EXCLUDED."${c}"`)
+                .join(', ');
+
+              // Add updatedAt = NOW() if not already in the list
+              if (!updateList.includes('updatedAt') && !updateList.includes('updated_at')) {
+                updateList = updateList ? `${updateList}, "updatedAt" = NOW()` : '"updatedAt" = NOW()';
+              }
+
+              const query = `
+                INSERT INTO "${table.pg}" (${columnList})
+                VALUES (${placeholders})
+                ON CONFLICT ("id") DO UPDATE SET ${updateList}
+              `;
+
+              await pgClient.query(query, pgValues);
+              tableSuccess++;
+            } catch (recordError: any) {
+              tableFailed++;
+              // Only log first error per table
+              if (tableFailed === 1) {
+                console.log(`[Sync] ⚠️ ${table.pg} error: ${recordError.message.substring(0, 60)}...`);
+              }
+            }
+          }
+
+          if (tableSuccess > 0) {
+            console.log(`[Sync] ✅ SQLite→PG ${table.pg}: ${tableSuccess} synced, ${tableFailed} failed`);
+          }
+          result.synced += tableSuccess;
+          result.failed += tableFailed;
+
+        } catch (tableError: any) {
+          console.error(`[Sync] ❌ ${table.pg}: ${tableError.message}`);
+          result.errors.push(`${table.pg}: ${tableError.message}`);
+        }
+      }
+
+      await pgClient.end();
+      console.log(`[Sync] ✅ SQLite → PostgreSQL complete: ${result.synced} synced, ${result.failed} failed`);
+
+    } catch (error: any) {
+      console.error('[Sync] ❌ SQLite → PostgreSQL failed:', error.message);
+      result.errors.push(error.message);
+    }
+
+    return result;
+  }
+
+  /**
+   * Immediate sync - Sync a single record change to PostgreSQL right away
+   * Called from controllers when data is created/updated/deleted
+   *
+   * IMPORTANT: This checks PostgreSQL connectivity, not just local DB status
+   * If PostgreSQL is available, writes go there. If not, data stays in SQLite.
+   */
+  async syncRecordToPostgreSQL(
+    tableName: string,
+    operation: 'create' | 'update' | 'delete',
+    record: any
+  ): Promise<boolean> {
+    const dbService = getDatabaseService();
+
+    // CRITICAL: Check PostgreSQL connectivity, not just local DB status
+    // Local DB (SQLite) is always available, but we need PostgreSQL for sync
+    const pgAvailable = await dbService.checkPostgreSQLConnectivity();
+
+    if (!pgAvailable) {
+      // PostgreSQL is down - queue for later sync
+      this.addToQueue(tableName, operation, record);
+      console.log(`[Sync] ⏳ PostgreSQL offline - queued ${operation} for ${tableName} (data saved in SQLite)`);
+      return false;
+    }
+
+    // Also check local DB is available
+    if (dbService.getConnectionStatus() !== 'online') {
+      this.addToQueue(tableName, operation, record);
+      console.log(`[Sync] ⏳ Local DB offline - queued ${operation} for ${tableName}`);
+      return false;
+    }
+
+    try {
+      const pgClient = await dbService.getRawPostgreSQLClient();
+      if (!pgClient) {
+        this.addToQueue(tableName, operation, record);
+        return false;
+      }
+
+      const pgTableName = this.getPostgreSQLTableName(tableName);
+
+      switch (operation) {
+        case 'create':
+        case 'update':
+          await this.upsertRecord(pgClient, pgTableName, record);
+          break;
+        case 'delete':
+          await this.deleteFromPostgreSQL(pgClient, pgTableName, record.id);
+          break;
+      }
+
+      await pgClient.end();
+      console.log(`[Sync] ✅ Immediately synced ${operation} to PostgreSQL: ${tableName}`);
+      return true;
+    } catch (error: any) {
+      console.error(`[Sync] ❌ Immediate sync failed: ${error.message}`);
+      // Queue for retry
+      this.addToQueue(tableName, operation, record);
+      return false;
+    }
+  }
+
+  /**
+   * Pull a specific table from PostgreSQL to SQLite (LIVE → LOCAL)
+   * This is the MISSING DIRECTION - gets changes made in the live database
+   * Called by controllers to ensure they have the latest data
+   *
+   * @param tableName - Prisma model name (e.g., 'product', 'customer')
+   */
+  async pullTableFromPostgreSQL(tableName: string): Promise<{ synced: number; failed: number }> {
+    const result = { synced: 0, failed: 0 };
+
+    const dbService = getDatabaseService();
+
+    // Check if online
+    if (dbService.getConnectionStatus() !== 'online') {
+      console.log(`[Sync] ⚠️ Offline - cannot pull from PostgreSQL`);
+      return result;
+    }
+
+    // Check if using PostgreSQL directly (no need to sync to itself)
+    if (process.env.USE_POSTGRESQL === 'true') {
+      return result;
+    }
+
+    try {
+      const pgClient = await dbService.getRawPostgreSQLClient();
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!pgClient || !sqliteClient) {
+        console.log(`[Sync] ⚠️ Database clients not available`);
+        return result;
+      }
+
+      const pgTableName = this.getPostgreSQLTableName(tableName);
+
+      // Check if table exists in PostgreSQL
+      const tableExists = await this.tableExistsInPostgreSQL(pgClient, pgTableName);
+      if (!tableExists) {
+        await pgClient.end();
+        return result;
+      }
+
+      // Get all records from PostgreSQL
+      const pgResult = await pgClient.query(`SELECT * FROM "${pgTableName}"`);
+      const records = pgResult.rows;
+
+      if (records.length === 0) {
+        await pgClient.end();
+        return result;
+      }
+
+      // Get Prisma model for this table
+      const prismaModel = (sqliteClient as any)[tableName];
+      if (!prismaModel) {
+        console.log(`[Sync] ⚠️ Prisma model not found: ${tableName}`);
+        await pgClient.end();
+        return result;
+      }
+
+      // Upsert each record to SQLite
+      for (const record of records) {
+        try {
+          // Clean record for SQLite/Prisma
+          const cleanData: any = {};
+
+          for (const [key, value] of Object.entries(record)) {
+            // Convert snake_case to camelCase
+            const camelKey = this.snakeToCamel(key);
+
+            // Skip sync metadata columns
+            if (['updated_at', 'created_at', 'is_synced', 'synced_at', 'last_modified'].includes(key)) {
+              continue;
+            }
+
+            // Handle value conversion
+            if (value === null || value === undefined) {
+              cleanData[camelKey] = null;
+            } else if (value === 't' || value === true) {
+              cleanData[camelKey] = true;
+            } else if (value === 'f' || value === false) {
+              cleanData[camelKey] = false;
+            } else if (value instanceof Date) {
+              cleanData[camelKey] = value;
+            } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+              cleanData[camelKey] = new Date(value);
+            } else {
+              cleanData[camelKey] = value;
+            }
+          }
+
+          const recordId = cleanData.id;
+          if (!recordId) {
+            result.failed++;
+            continue;
+          }
+
+          // Remove id from update data
+          const { id, ...updateData } = cleanData;
+
+          // Check if record exists first
+          const existingRecord = await prismaModel.findUnique({
+            where: { id: recordId }
+          });
+
+          if (existingRecord) {
+            // Compare timestamps - only update if PostgreSQL record is newer
+            const pgUpdatedAt = cleanData.updatedAt || cleanData.createdAt;
+            const sqliteUpdatedAt = existingRecord.updatedAt || existingRecord.createdAt;
+
+            if (pgUpdatedAt && sqliteUpdatedAt && new Date(pgUpdatedAt) > new Date(sqliteUpdatedAt)) {
+              // PostgreSQL record is newer - update SQLite
+              await prismaModel.update({
+                where: { id: recordId },
+                data: updateData
+              });
+              result.synced++;
+            }
+            // If SQLite record is newer or same, don't overwrite (local changes take precedence)
+          } else {
+            // Record doesn't exist in SQLite - create it
+            await prismaModel.create({
+              data: cleanData
+            });
+            result.synced++;
+          }
+        } catch (recordError: any) {
+          result.failed++;
+          // Silent fail for individual records
+        }
+      }
+
+      await pgClient.end();
+
+      if (result.synced > 0) {
+        console.log(`[Sync] ⬇️ Pulled ${result.synced} records from PostgreSQL: ${tableName}`);
+      }
+
+    } catch (error: any) {
+      console.error(`[Sync] ❌ Pull from PostgreSQL failed: ${error.message}`);
+      result.failed++;
+    }
+
+    return result;
+  }
+
+  /**
+   * Pull a specific record from PostgreSQL by ID
+   * Use this when you need to refresh a single record
+   *
+   * @param tableName - Prisma model name (e.g., 'product')
+   * @param recordId - The ID of the record to pull
+   */
+  async pullRecordFromPostgreSQL(tableName: string, recordId: string): Promise<boolean> {
+    const dbService = getDatabaseService();
+
+    // Check if online
+    if (dbService.getConnectionStatus() !== 'online') {
+      return false;
+    }
+
+    // Check if using PostgreSQL directly
+    if (process.env.USE_POSTGRESQL === 'true') {
+      return true;
+    }
+
+    try {
+      const pgClient = await dbService.getRawPostgreSQLClient();
+      const sqliteClient = dbService.getSQLiteClient();
+
+      if (!pgClient || !sqliteClient) {
+        return false;
+      }
+
+      const pgTableName = this.getPostgreSQLTableName(tableName);
+
+      // Get the specific record from PostgreSQL
+      const pgResult = await pgClient.query(`SELECT * FROM "${pgTableName}" WHERE id = $1`, [recordId]);
+
+      if (pgResult.rows.length === 0) {
+        await pgClient.end();
+        return false;
+      }
+
+      const record = pgResult.rows[0];
+      const prismaModel = (sqliteClient as any)[tableName];
+
+      if (!prismaModel) {
+        await pgClient.end();
+        return false;
+      }
+
+      // Clean record for SQLite
+      const cleanData: any = {};
+      for (const [key, value] of Object.entries(record)) {
+        const camelKey = this.snakeToCamel(key);
+        if (['updated_at', 'created_at', 'is_synced', 'synced_at', 'last_modified'].includes(key)) {
+          continue;
+        }
+        if (value === null || value === undefined) {
+          cleanData[camelKey] = null;
+        } else if (value === 't' || value === true) {
+          cleanData[camelKey] = true;
+        } else if (value === 'f' || value === false) {
+          cleanData[camelKey] = false;
+        } else if (value instanceof Date) {
+          cleanData[camelKey] = value;
+        } else if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+          cleanData[camelKey] = new Date(value);
+        } else {
+          cleanData[camelKey] = value;
+        }
+      }
+
+      const { id, ...updateData } = cleanData;
+
+      // Upsert to SQLite
+      const existingRecord = await prismaModel.findUnique({ where: { id: recordId } });
+
+      if (existingRecord) {
+        await prismaModel.update({
+          where: { id: recordId },
+          data: updateData
+        });
+      } else {
+        await prismaModel.create({
+          data: cleanData
+        });
+      }
+
+      await pgClient.end();
+      console.log(`[Sync] ⬇️ Pulled record ${recordId} from PostgreSQL: ${tableName}`);
+      return true;
+    } catch (error: any) {
+      console.error(`[Sync] ❌ Pull record failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Immediate bidirectional sync for a single operation
+   * Pushes to PostgreSQL AND pulls from PostgreSQL in one call
+   *
+   * @param tableName - Prisma model name
+   * @param operation - 'create' | 'update' | 'delete'
+   * @param record - The record data
+   */
+  async syncBidirectionalImmediate(
+    tableName: string,
+    operation: 'create' | 'update' | 'delete',
+    record: any
+  ): Promise<{ pushed: boolean; pulled: { synced: number; failed: number } }> {
+    // Step 1: Push LOCAL → LIVE
+    const pushed = await this.syncRecordToPostgreSQL(tableName, operation, record);
+
+    // Step 2: Pull LIVE → LOCAL (for any external changes)
+    const pulled = await this.pullTableFromPostgreSQL(tableName);
+
+    return { pushed, pulled };
   }
 }
 

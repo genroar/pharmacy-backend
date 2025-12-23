@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { getPrisma } from '../utils/db.util';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -169,6 +170,11 @@ export const calculateCommission = async (req: Request, res: Response) => {
           }
         }
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('commission', 'create', commission).catch(err => {
+      console.error('[Sync] Commission create sync failed:', err.message);
     });
 
     return res.status(201).json({
@@ -380,6 +386,11 @@ export const updateCommission = async (req: Request, res: Response) => {
           }
         }
       }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('commission', 'update', commission).catch(err => {
+      console.error('[Sync] Commission update sync failed:', err.message);
     });
 
     return res.json({

@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deleteCategory = exports.updateCategory = exports.createCategory = exports.getCategory = exports.getCategories = void 0;
 const db_util_1 = require("../utils/db.util");
+const sync_helper_1 = require("../utils/sync-helper");
 const joi_1 = __importDefault(require("joi"));
 const createCategorySchema = joi_1.default.object({
     name: joi_1.default.string().required(),
@@ -22,6 +23,7 @@ const updateCategorySchema = joi_1.default.object({
 });
 const getCategories = async (req, res) => {
     try {
+        await (0, sync_helper_1.pullLatestFromLive)('category').catch(err => console.log('[Sync] Pull categories:', err.message));
         const prisma = await (0, db_util_1.getPrisma)();
         const { page = 1, limit = 50, search = '', branchId = '' } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
@@ -330,6 +332,9 @@ const createCategory = async (req, res) => {
             branchId: category.branchId,
             companyId: category.companyId
         });
+        (0, sync_helper_1.syncAfterOperation)('category', 'create', category).catch(err => {
+            console.error('[Sync] Category create sync failed:', err.message);
+        });
         return res.status(201).json({
             success: true,
             data: category
@@ -393,6 +398,9 @@ const updateCategory = async (req, res) => {
             where: { id },
             data: updateData
         });
+        (0, sync_helper_1.syncAfterOperation)('category', 'update', category).catch(err => {
+            console.error('[Sync] Category update sync failed:', err.message);
+        });
         return res.json({
             success: true,
             data: category
@@ -435,6 +443,9 @@ const deleteCategory = async (req, res) => {
         }
         await prisma.category.delete({
             where: { id }
+        });
+        (0, sync_helper_1.syncAfterOperation)('category', 'delete', { id }).catch(err => {
+            console.error('[Sync] Category delete sync failed:', err.message);
         });
         return res.json({
             success: true,

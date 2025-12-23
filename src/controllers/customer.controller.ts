@@ -6,6 +6,7 @@ import { getPrisma } from '../utils/db.util';
 import { CreateCustomerData, UpdateCustomerData } from '../models/customer.model';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { notifyCustomerChange } from '../routes/sse.routes';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 import Joi from 'joi';
 
 // Validation schemas
@@ -28,6 +29,9 @@ const updateCustomerSchema = Joi.object({
 
 export const getCustomers = async (req: AuthRequest, res: Response) => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await pullLatestFromLive('customer').catch(err => console.log('[Sync] Pull customers:', err.message));
+
     const prisma = await getPrisma();
     const {
       page = 1,
@@ -460,6 +464,11 @@ export const createCustomer = async (req: AuthRequest, res: Response) => {
       notifyCustomerChange(createdBy, 'created', customer);
     }
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('customer', 'create', customer).catch(err => {
+      console.error('[Sync] Customer create sync failed:', err.message);
+    });
+
     return res.status(201).json({
       success: true,
       data: customer,
@@ -552,6 +561,11 @@ export const updateCustomer = async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('customer', 'update', customer).catch(err => {
+      console.error('[Sync] Customer update sync failed:', err.message);
+    });
+
     return res.json({
       success: true,
       data: customer
@@ -582,9 +596,14 @@ export const deleteCustomer = async (req: Request, res: Response) => {
     }
 
     // Soft delete
-    await prisma.customer.update({
+    const deletedCustomer = await prisma.customer.update({
       where: { id },
       data: { isActive: false }
+    });
+
+    // 🔄 IMMEDIATE BIDIRECTIONAL SYNC
+    syncAfterOperation('customer', 'update', deletedCustomer).catch(err => {
+      console.error('[Sync] Customer delete sync failed:', err.message);
     });
 
     return res.json({

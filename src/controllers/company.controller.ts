@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import Joi from 'joi';
 import { getPrisma } from '../utils/db.util';
+import { AuthRequest } from '../middleware/auth.middleware';
+import { syncAfterOperation, pullLatestFromLive } from '../utils/sync-helper';
 
 // Validation schemas
 const createCompanySchema = Joi.object({
@@ -21,14 +23,54 @@ const updateCompanySchema = Joi.object({
 });
 
 // Get all companies for the authenticated user
-// NOTE: Removed SUPERADMIN check - all users can see all active companies
-export const getCompanies = async (req: Request, res: Response): Promise<void> => {
+// Filter by user role - ADMIN only sees their own companies
+export const getCompanies = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const prisma = await getPrisma();
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST (companies and related branches)
+    await Promise.all([
+      pullLatestFromLive('company').catch(err => console.log('[Sync] Pull companies:', err.message)),
+      pullLatestFromLive('branch').catch(err => console.log('[Sync] Pull branches:', err.message))
+    ]);
 
-    // All users can see all active companies
+    const prisma = await getPrisma();
+    const user = req.user;
+
+    // Build where clause based on user role
+    const where: any = { isActive: true };
+
+    if (user?.role === 'SUPERADMIN') {
+      // SUPERADMIN can see all companies
+      console.log('🏢 SUPERADMIN - showing all companies');
+    } else if (user?.role === 'ADMIN') {
+      // ADMIN can only see companies they created
+      where.createdBy = user.id;
+      console.log('🏢 ADMIN - showing companies created by:', user.id);
+    } else if (user?.role === 'MANAGER' || user?.role === 'CASHIER') {
+      // MANAGER/CASHIER can only see their branch's company
+      if (user?.branchId) {
+        // Get the company through their branch
+        const userBranch = await prisma.branch.findUnique({
+          where: { id: user.branchId },
+          select: { companyId: true }
+        });
+        if (userBranch?.companyId) {
+          where.id = userBranch.companyId;
+          console.log('🏢 MANAGER/CASHIER - showing company:', userBranch.companyId);
+        } else {
+          // No company access
+          where.id = 'no-access';
+        }
+      } else {
+        // No branch assigned - no access
+        where.id = 'no-access';
+      }
+    } else {
+      // Unknown role - no access
+      where.id = 'no-access';
+    }
+
     const companies = await prisma.company.findMany({
-        where: { isActive: true },
+        where,
         include: {
           branches: {
             where: { isActive: true },
@@ -49,6 +91,8 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
         orderBy: { createdAt: 'desc' }
       });
 
+    console.log(`🏢 Returning ${companies.length} companies for user ${user?.id} (${user?.role})`);
+
     res.json({
       success: true,
       data: companies
@@ -66,6 +110,12 @@ export const getCompanies = async (req: Request, res: Response): Promise<void> =
 // NOTE: Removed access check - all users can view any company
 export const getCompany = async (req: Request, res: Response): Promise<void> => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST (company and related branches)
+    await Promise.all([
+      pullLatestFromLive('company').catch(err => console.log('[Sync] Pull company:', err.message)),
+      pullLatestFromLive('branch').catch(err => console.log('[Sync] Pull branches:', err.message))
+    ]);
+
     const prisma = await getPrisma();
     const { id } = req.params;
 
@@ -179,6 +229,14 @@ export const createCompany = async (req: Request, res: Response): Promise<void> 
       }
     });
 
+    // 🔄 IMMEDIATE SYNC TO LIVE DATABASE (wait for completion)
+    try {
+      await syncAfterOperation('company', 'create', company);
+      console.log('[Sync] ✅ Company create synced to live');
+    } catch (err: any) {
+      console.error('[Sync] Company create sync failed:', err.message);
+    }
+
     res.status(201).json({
       success: true,
       data: company,
@@ -248,7 +306,8 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
         ...(address !== undefined && { address }),
         ...(phone !== undefined && { phone }),
         ...(email !== undefined && { email }),
-        ...(businessType !== undefined && { businessType })
+        ...(businessType !== undefined && { businessType }),
+        updatedAt: new Date() // Ensure updatedAt is set for sync comparison
       },
       include: {
         branches: {
@@ -263,6 +322,14 @@ export const updateCompany = async (req: Request, res: Response): Promise<void> 
         }
       }
     });
+
+    // 🔄 IMMEDIATE SYNC TO LIVE DATABASE (wait for completion)
+    try {
+      await syncAfterOperation('company', 'update', company);
+      console.log('[Sync] ✅ Company update synced to live');
+    } catch (err: any) {
+      console.error('[Sync] Company update sync failed:', err.message);
+    }
 
     res.json({
       success: true,
@@ -323,10 +390,21 @@ export const deleteCompany = async (req: Request, res: Response): Promise<void> 
     }
 
     // Soft delete the company
-    await prisma.company.update({
+    const deletedCompany = await prisma.company.update({
       where: { id },
-      data: { isActive: false }
+      data: {
+        isActive: false,
+        updatedAt: new Date()
+      }
     });
+
+    // 🔄 IMMEDIATE SYNC TO LIVE DATABASE (wait for completion)
+    try {
+      await syncAfterOperation('company', 'update', deletedCompany);
+      console.log('[Sync] ✅ Company delete synced to live');
+    } catch (err: any) {
+      console.error('[Sync] Company delete sync failed:', err.message);
+    }
 
     res.json({
       success: true,
@@ -376,7 +454,10 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
 
     const company = await prisma.company.update({
       where: { id },
-      data: { businessType },
+      data: {
+        businessType,
+        updatedAt: new Date()
+      },
       include: {
         branches: {
           where: { isActive: true }
@@ -390,6 +471,14 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
         }
       }
     });
+
+    // 🔄 IMMEDIATE SYNC TO LIVE DATABASE (wait for completion)
+    try {
+      await syncAfterOperation('company', 'update', company);
+      console.log('[Sync] ✅ Company business type synced to live');
+    } catch (err: any) {
+      console.error('[Sync] Company business type sync failed:', err.message);
+    }
 
     res.json({
       success: true,
@@ -409,6 +498,9 @@ export const updateCompanyBusinessType = async (req: Request, res: Response): Pr
 // NOTE: Removed access check - any user can view company stats
 export const getCompanyStats = async (req: Request, res: Response): Promise<void> => {
   try {
+    // 🔄 PULL LATEST FROM LIVE DATABASE FIRST
+    await pullLatestFromLive('company').catch(err => console.log('[Sync] Pull company stats:', err.message));
+
     const prisma = await getPrisma();
     const { id } = req.params;
 
